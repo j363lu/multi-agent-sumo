@@ -1,0 +1,60 @@
+# Default configuration for MAPPO training on cologne3
+
+# SUMO Environment Configuration
+sumo:
+  net_file: "RESCO/cologne3/cologne3.net.xml"
+  route_file: "RESCO/cologne3/cologne3.rou.xml"
+  num_seconds: 26000  # Extended to capture full traffic scenario (vehicles depart at ~23500s)
+  use_gui: false
+  delta_time: 5
+  yellow_time: 2
+  min_green: 5
+  max_green: 50
+
+# Neural Network Architecture
+network:
+  actor_hidden: [128, 128]
+  critic_hidden: [256, 256]
+  activation: "relu"
+  use_orthogonal_init: true
+
+# MAPPO Algorithm Hyperparameters
+mappo:
+  lr_actor: 0.0003
+  lr_critic: 0.001
+  gamma: 0.99
+  gae_lambda: 0.95
+  eps_clip: 0.2
+  dual_clip: null
+  value_clip: true
+  advantage_normalization: true
+  vf_coef: 0.5
+  ent_coef: 0.01
+  max_grad_norm: 0.5
+  reward_normalization: false
+
+# Training Configuration
+training:
+  max_epoch: 100
+  step_per_epoch: 10000
+  episode_per_collect: 10
+  batch_size: 256
+  repeat_per_collect: 4
+  n_train_envs: 4
+  n_test_envs: 2
+  test_interval: 5
+  save_interval: 10
+  log_interval: 10
+
+# Logging Configuration
+logging:
+  project: "sumo-mappo-traffic"
+  group: "cologne3"
+  tags: ["mappo", "traffic-control"]
+  use_wandb: true
+  log_dir: "logs"
+  experiment_name: null
+
+# General Settings
+seed: 42
+device: "cuda"  # or "cpu"

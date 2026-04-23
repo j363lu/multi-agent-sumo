@@ -1,0 +1,38 @@
+# Debug configuration (faster, headless by default)
+# Note: GUI mode requires XQuartz on macOS - install with: brew install --cask xquartz
+
+sumo:
+  net_file: "RESCO/cologne3/cologne3.net.xml"
+  route_file: "RESCO/cologne3/cologne3.rou.xml"
+  num_seconds: 25000  # Extended to see vehicles (depart at ~23500s)
+  use_gui: false  # Set to true only if you have XQuartz installed
+  delta_time: 5
+
+network:
+  actor_hidden: [64, 64]  # Smaller networks
+  critic_hidden: [128, 128]
+
+mappo:
+  lr_actor: 0.001  # Higher learning rate for faster convergence
+  lr_critic: 0.001
+  gamma: 0.99
+  gae_lambda: 0.95
+  eps_clip: 0.2
+
+training:
+  max_epoch: 5  # Few epochs for debugging
+  step_per_epoch: 1000
+  episode_per_collect: 2
+  batch_size: 64
+  repeat_per_collect: 2
+  n_train_envs: 1  # Single environment
+  n_test_envs: 1
+  test_interval: 1
+  save_interval: 2
+
+logging:
+  use_wandb: false  # Disable W&B for debugging
+  log_dir: "logs/debug"
+
+seed: 42
+device: "cpu"  # Use CPU for debugging

@@ -1,0 +1,8 @@
+# Virtual environment
+MAPPO_venv/
+
+# Miscellaneous files
+miscellaneous/
+
+# Training logs and checkpoints
+logs/
