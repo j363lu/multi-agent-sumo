@@ -15,9 +15,25 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from mappo_traffic.config import ExperimentConfig
-from mappo_traffic.config.default_configs import get_default_config, get_debug_config, get_fast_test_config
-from mappo_traffic.training import MAPPOTrainer
+# Auto-detect SUMO_HOME / PROJ_DATA from the installed sumo package so
+# collaborators don't need to set shell environment variables manually.
+def _configure_sumo_env() -> None:
+    if not os.environ.get("SUMO_HOME"):
+        try:
+            import sumo as _sumo_pkg
+            os.environ["SUMO_HOME"] = os.path.dirname(_sumo_pkg.__file__)
+        except ImportError:
+            pass
+    if not os.environ.get("PROJ_DATA"):
+        candidate = os.path.join(os.environ.get("SUMO_HOME", ""), "data", "proj")
+        if os.path.isdir(candidate):
+            os.environ["PROJ_DATA"] = candidate
+
+_configure_sumo_env()
+
+from MAPPO.config import ExperimentConfig
+from MAPPO.config.default_configs import get_default_config, get_debug_config, get_fast_test_config
+from MAPPO.training import MAPPOTrainer
 
 
 def parse_args():
@@ -91,9 +107,9 @@ def parse_args():
     parser.add_argument(
         "--device",
         type=str,
-        choices=["cpu", "cuda"],
+        choices=["cpu", "cuda", "mps"],
         default=None,
-        help="Device to use (cpu or cuda)"
+        help="Device to use (cpu, cuda, or mps)"
     )
     
     # Logging overrides

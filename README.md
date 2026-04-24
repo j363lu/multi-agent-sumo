@@ -44,10 +44,19 @@ This project implements MAPPO, a state-of-the-art multi-agent reinforcement lear
    # Windows: Download from https://eclipse.dev/sumo/
    ```
 
-2. **Set SUMO_HOME environment variable**:
+2. **Set SUMO_HOME environment variable** *(optional — auto-detected if not set)*:
+
+   The training and evaluation scripts automatically detect `SUMO_HOME` and `PROJ_DATA`
+   from the installed `sumo` Python package, so **no manual configuration is required**
+   as long as you install dependencies via `pip install -r requirements.txt`.
+
+   If you want to set them permanently anyway (e.g. for tools outside this project):
    ```bash
-   # Add to ~/.bashrc or ~/.zshrc
-   export SUMO_HOME="/usr/share/sumo"  # Adjust path as needed
+   # Auto-detect the correct path from the installed package
+   export SUMO_HOME=$(python -c "import sumo, os; print(os.path.dirname(sumo.__file__))")
+   export PROJ_DATA=$SUMO_HOME/data/proj
+
+   # Add the above lines to ~/.bashrc or ~/.zshrc to make them permanent
    ```
 
 ### Install Dependencies
@@ -104,7 +113,7 @@ python scripts/evaluate.py --checkpoint logs/experiment_name/checkpoints/checkpo
 
 ```
 multi-agent-sumo/
-├── mappo_traffic/              # Main package
+├── MAPPO/              # Main package
 │   ├── agents/                 # MAPPO policy and manager
 │   │   ├── mappo_policy.py     # MAPPO policy implementation
 │   │   └── multi_agent_manager.py  # Multi-agent coordination
@@ -375,7 +384,7 @@ python scripts/train_mappo.py --config configs/base_config.yaml  # Edit batch_si
 
 #### 3. Import Errors
 ```
-ModuleNotFoundError: No module named 'mappo_traffic'
+ModuleNotFoundError: No module named 'MAPPO'
 ```
 **Solution**: Install dependencies and add project to PYTHONPATH
 ```bash
@@ -414,22 +423,22 @@ This enables:
 
 ### Key Components
 
-1. **Actor Network** ([`actor.py`](mappo_traffic/networks/actor.py))
+1. **Actor Network** ([`actor.py`](MAPPO/networks/actor.py))
    - Input: Local traffic state (queue, speed, etc.)
    - Output: Categorical distribution over traffic phases
    - One per agent (decentralized)
 
-2. **Centralized Critic** ([`critic.py`](mappo_traffic/networks/critic.py))
+2. **Centralized Critic** ([`critic.py`](MAPPO/networks/critic.py))
    - Input: Concatenated observations from all agents
    - Output: Value estimate for global state
    - Shared across all agents
 
-3. **MAPPO Policy** ([`mappo_policy.py`](mappo_traffic/agents/mappo_policy.py))
+3. **MAPPO Policy** ([`mappo_policy.py`](MAPPO/agents/mappo_policy.py))
    - PPO update with clipped objective
    - GAE for advantage estimation
    - Entropy bonus for exploration
 
-4. **Multi-Agent Manager** ([`multi_agent_manager.py`](mappo_traffic/agents/multi_agent_manager.py))
+4. **Multi-Agent Manager** ([`multi_agent_manager.py`](MAPPO/agents/multi_agent_manager.py))
    - Coordinates multiple agents
    - Manages state aggregation for critic
    - Dispatches observations to policies
@@ -456,7 +465,7 @@ python scripts/train_mappo.py --net-file RESCO/new_scenario/network.net.xml --ro
 
 ### Modifying Reward Function
 
-Edit [`mappo_traffic/envs/sumo_env_wrapper.py`](mappo_traffic/envs/sumo_env_wrapper.py) to implement custom rewards.
+Edit [`MAPPO/envs/sumo_env_wrapper.py`](MAPPO/envs/sumo_env_wrapper.py) to implement custom rewards.
 
 ### Hyperparameter Tuning
 

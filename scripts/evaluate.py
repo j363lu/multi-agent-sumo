@@ -13,13 +13,29 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Auto-detect SUMO_HOME / PROJ_DATA from the installed sumo package so
+# collaborators don't need to set shell environment variables manually.
+def _configure_sumo_env() -> None:
+    if not os.environ.get("SUMO_HOME"):
+        try:
+            import sumo as _sumo_pkg
+            os.environ["SUMO_HOME"] = os.path.dirname(_sumo_pkg.__file__)
+        except ImportError:
+            pass
+    if not os.environ.get("PROJ_DATA"):
+        candidate = os.path.join(os.environ.get("SUMO_HOME", ""), "data", "proj")
+        if os.path.isdir(candidate):
+            os.environ["PROJ_DATA"] = candidate
+
+_configure_sumo_env()
+
 import torch
-from mappo_traffic.config import ExperimentConfig
-from mappo_traffic.envs import SumoTianshouEnv
-from mappo_traffic.networks import ActorNetwork, CentralizedCritic
-from mappo_traffic.agents import MAPPOPolicy, MultiAgentPolicyManager
-from mappo_traffic.training.evaluator import evaluate_policy, evaluate_baseline
-from mappo_traffic.utils import load_checkpoint
+from MAPPO.config import ExperimentConfig
+from MAPPO.envs import SumoTianshouEnv
+from MAPPO.networks import ActorNetwork, CentralizedCritic
+from MAPPO.agents import MAPPOPolicy, MultiAgentPolicyManager
+from MAPPO.training.evaluator import evaluate_policy, evaluate_baseline
+from MAPPO.utils import load_checkpoint
 
 
 def parse_args():
@@ -49,7 +65,7 @@ def parse_args():
     parser.add_argument(
         "--device",
         type=str,
-        choices=["cpu", "cuda"],
+        choices=["cpu", "cuda", "mps"],
         default="cpu",
         help="Device to use"
     )
@@ -81,7 +97,7 @@ def main():
         config = ExperimentConfig.from_dict(config_dict)
     else:
         print("Warning: Config not found, using default")
-        from mappo_traffic.config.default_configs import get_default_config
+        from MAPPO.config.default_configs import get_default_config
         config = get_default_config()
     
     # Override GUI setting
