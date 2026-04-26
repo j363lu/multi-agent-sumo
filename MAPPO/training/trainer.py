@@ -107,6 +107,8 @@ class MAPPOTrainer:
         self._csv_fields = [
             "epoch", "split", "wallclock_time_s",
             "episode_reward", "episode_length",
+            "mean_waiting_time", "std_waiting_time",
+            "mean_queue_length", "std_queue_length",
             "loss", "actor_loss", "critic_loss", "entropy", "clip_frac",
         ]
         self._csv_writer = csv.DictWriter(
@@ -117,13 +119,25 @@ class MAPPOTrainer:
         print("Trainer initialized successfully!")
     
     def _set_seeds(self, seed: int):
-        """Set random seeds for reproducibility."""
-        np.random.seed(seed)
-        torch.manual_seed(seed)
+        """Set random seeds for reproducibility.
+
+        Network weight initialisation always uses a fixed seed (0) so that
+        model weights are identical across runs with different config.seed
+        values.  This isolates cross-seed variance to environment stochasticity
+        only, which is already captured within a single run via std_waiting_time
+        (5 fixed eval traffic seeds per checkpoint).  config.seed continues to
+        control the episode/environment seed sequence.
+        """
+        # Fixed weight-init seed — same across all runs regardless of config.seed
+        _WEIGHT_INIT_SEED = 0
+        torch.manual_seed(_WEIGHT_INIT_SEED)
         if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed(_WEIGHT_INIT_SEED)
         if torch.backends.mps.is_available():
-            torch.mps.manual_seed(seed)
+            torch.mps.manual_seed(_WEIGHT_INIT_SEED)
+
+        # config.seed controls only episode / environment randomness
+        np.random.seed(seed)
     
     def _create_env(self, sumo_config, num_envs: int = 1) -> SumoTianshouEnv:
         """Create SUMO environment."""
@@ -247,12 +261,12 @@ class MAPPOTrainer:
             
             # Log training metrics
             epoch_time = time.time() - epoch_start_time
-            self._log_epoch(epoch, collect_result, train_result, epoch_time)
-            
+            self._log_epoch(epoch + 1, collect_result, train_result, epoch_time)
+
             # Evaluation
             if (epoch + 1) % config.test_interval == 0:
                 eval_result = self._evaluate()
-                self._log_evaluation(epoch, eval_result)
+                self._log_evaluation(epoch + 1, eval_result)
             
             # Save checkpoint
             if (epoch + 1) % config.save_interval == 0:
@@ -504,10 +518,14 @@ class MAPPOTrainer:
 
         # Write CSV row for this evaluation checkpoint
         self._csv_writer.writerow({
-            "epoch":            epoch,
-            "split":            "eval",
-            "wallclock_time_s": round(wallclock_time, 3),
-            "episode_reward":   eval_result.get('mean_reward', ''),
+            "epoch":              epoch,
+            "split":              "eval",
+            "wallclock_time_s":   round(wallclock_time, 3),
+            "episode_reward":     eval_result.get('mean_reward', ''),
+            "mean_waiting_time":  eval_result.get('mean_waiting_time', ''),
+            "std_waiting_time":   eval_result.get('std_waiting_time',  ''),
+            "mean_queue_length":  eval_result.get('mean_queue_length', ''),
+            "std_queue_length":   eval_result.get('std_queue_length',  ''),
         })
         self._csv_file.flush()
 

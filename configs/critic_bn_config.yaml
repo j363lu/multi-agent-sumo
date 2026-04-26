@@ -1,0 +1,68 @@
+# MAPPO_BNTT experiment configuration — BatchNorm on centralized critic
+# Cologne3 scenario, identical hyperparameters to the baseline.
+# Only network.use_critic_bn differs from configs/base_config.yaml.
+#
+# Usage:
+#   python scripts/train_mappo.py --config configs/critic_bn_config.yaml --seed 0
+#   python scripts/run_experiment_sweep.py --variants critic-bn --seeds 0 1 2
+
+sumo:
+  net_file: RESCO/cologne3/cologne3.net.xml
+  route_file: RESCO/cologne3/cologne3.rou.xml
+  begin_time: 23400
+  num_seconds: 5600
+  use_gui: false
+  delta_time: 5
+  yellow_time: 2
+  min_green: 5
+  max_green: 50
+
+network:
+  actor_hidden: [128, 128]
+  critic_hidden: [256, 256]
+  activation: relu
+  use_orthogonal_init: true
+  # ── BNTT experiment knob ──────────────────────────────────────────────────
+  # True → CentralizedCriticBN inserts BatchNorm1d before each hidden activation.
+  # Baseline comparison: set to false (or use configs/base_config.yaml).
+  use_critic_bn: true
+
+mappo:
+  lr_actor: 1.0e-4
+  lr_critic: 1.0e-3
+  gamma: 0.99
+  gae_lambda: 0.95
+  eps_clip: 0.2
+  dual_clip: null
+  value_clip: true
+  advantage_normalization: true
+  vf_coef: 0.5
+  ent_coef: 0.01
+  max_grad_norm: 0.3
+  reward_normalization: true
+
+training:
+  max_epoch: 100
+  step_per_epoch: 10000
+  episode_per_collect: 30
+  batch_size: 256
+  repeat_per_collect: 2
+  n_train_envs: 4
+  n_test_envs: 5
+  test_interval: 5
+  save_interval: 10
+  log_interval: 1
+  use_fixed_episode_seeds: true
+
+logging:
+  project: sumo-mappo-traffic
+  group: cologne3-critic-bn
+  tags:
+    - mappo
+    - traffic-control
+    - critic-bn
+  use_wandb: false
+  log_dir: logs
+
+seed: 42
+device: cpu
