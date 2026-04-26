@@ -67,7 +67,13 @@ class TrainingConfig:
     test_interval: int = 5
     save_interval: int = 10
     log_interval: int = 1
-
+    # When True the trainer passes a deterministic seed to every env.reset() call.
+    # Training seeds advance monotonically from config.seed * 10_000 so each epoch
+    # sees new traffic realizations while the full sequence remains reproducible.
+    # Eval seeds are drawn from a separate block (config.seed * 10_000 + 900_000)
+    # so the same n_test_envs episodes are used at every evaluation checkpoint,
+    # making epoch-to-epoch eval comparisons free of env noise.
+    use_fixed_episode_seeds: bool = True
 
 
 @dataclass

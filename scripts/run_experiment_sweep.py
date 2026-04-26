@@ -36,12 +36,25 @@ Variants
 import argparse
 import datetime
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import List
+
+# SUMO/TraCI noise patterns that can appear anywhere within a \r-delimited
+# segment (including mid-line, appended after tqdm bar text or dashes).
+# Each pattern matches from the keyword to the end of that \r-frame.
+# Used with re.sub() to scrub noise out of display text while keeping the
+# rest of the segment (e.g. tqdm bar content that precedes a Step report).
+# The raw line is always written to run.log unchanged.
+_SUMO_NOISE_INLINE_RE = re.compile(
+    r"Step #[\d.]+[^\r]*"      # "Step #29000.00 (...)" to end of \r-frame
+    r"|Warning: [^\r]*"        # "Warning: ..." to end of \r-frame
+    r"|Retrying in \d+[^\r]*"  # "Retrying in 1 seconds..." to end of \r-frame
+)
 
 # Resolve repo root so the script works when called from any directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -142,11 +155,28 @@ def _stream_output(proc: subprocess.Popen, log_path: Path, prefix: str) -> None:
     with log_path.open("w") as log_fh:
         for raw_line in proc.stdout:
             line = raw_line.decode("utf-8", errors="replace")
+            # Always write to log file for post-hoc debugging.
             log_fh.write(line)
             log_fh.flush()
-            # Print to terminal with run prefix, stripping trailing newline
-            # so our prefix + the line forms a clean single line.
-            sys.stdout.write(f"[{prefix}] {line}")
+
+            # tqdm uses \r for in-place updates; SUMO writes Step# with \r
+            # too.  A single \n-terminated read from the pipe can therefore
+            # contain multiple \r-separated frames, e.g.:
+            #   "----\rStep #23400.00 (...)\r              \n"
+            # Strategy: split on \r, scrub SUMO noise from EVERY segment,
+            # then take the last non-empty cleaned segment to display.
+            segments = line.split("\r")
+            cleaned = [
+                _SUMO_NOISE_INLINE_RE.sub("", seg).strip()
+                for seg in segments
+            ]
+            display = next((s for s in reversed(cleaned) if s), "")
+
+            if not display:
+                continue
+
+            # Print to terminal with run prefix.
+            sys.stdout.write(f"[{prefix}] {display}\n")
             sys.stdout.flush()
 
 

@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from torch.optim import Adam
 from tianshou.data import Batch
+from tqdm import tqdm
 
 from MAPPO.config import ExperimentConfig
 from MAPPO.envs import SumoTianshouEnv
@@ -239,7 +240,8 @@ class MAPPOTrainer:
         
         config = self.config.training
         
-        for epoch in range(config.max_epoch):
+        epoch_pbar = tqdm(range(config.max_epoch), desc="Training", unit="epoch")
+        for epoch in epoch_pbar:
             self.current_epoch = epoch
             epoch_start_time = time.time()
             
@@ -262,6 +264,12 @@ class MAPPOTrainer:
             # Log training metrics
             epoch_time = time.time() - epoch_start_time
             self._log_epoch(epoch + 1, collect_result, train_result, epoch_time)
+
+            # Update progress bar with live metrics
+            epoch_pbar.set_postfix({
+                "rew": f"{collect_result['episode_reward']:.2f}",
+                "loss": f"{train_result['loss']:.4f}",
+            })
 
             # Evaluation
             if (epoch + 1) % config.test_interval == 0:
@@ -301,7 +309,7 @@ class MAPPOTrainer:
         episode_rewards = []
         episode_lengths = []
 
-        for _ in range(n_episode):
+        for _ in tqdm(range(n_episode), desc="Collecting", unit="ep", leave=False):
             # Deterministic seed cycling: each episode gets a unique seed derived
             # from config.seed so results are reproducible across runs with the
             # same seed, but different epochs always sample new traffic realizations.
