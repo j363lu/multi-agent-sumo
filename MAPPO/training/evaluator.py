@@ -14,7 +14,8 @@ def evaluate_policy(
     env: SumoTianshouEnv,
     n_episode: int = 10,
     device: str = "cpu",
-    deterministic: bool = True
+    deterministic: bool = True,
+    eval_seed_base: int = None
 ) -> Dict[str, float]:
     """
     Evaluate a policy on an environment.
@@ -25,6 +26,9 @@ def evaluate_policy(
         n_episode: Number of episodes to evaluate
         device: Device to run evaluation on
         deterministic: Whether to use deterministic actions
+        eval_seed_base: If not None, episode i is reset with seed
+            (eval_seed_base + i).  Using the same base across all evaluation
+            calls ensures epoch-to-epoch comparison is free of env randomness.
         
     Returns:
         Dictionary of evaluation metrics
@@ -35,7 +39,10 @@ def evaluate_policy(
     episode_queue_lengths = []
     
     for ep in range(n_episode):
-        obs_dict, info = env.reset()
+        if eval_seed_base is not None:
+            obs_dict, info = env.reset(seed=eval_seed_base + ep)
+        else:
+            obs_dict, info = env.reset()
         episode_reward = 0
         episode_length = 0
         done = False

@@ -16,6 +16,8 @@ class SumoConfig:
     net_file: str = "RESCO/cologne3/cologne3.net.xml"
     route_file: str = "RESCO/cologne3/cologne3.rou.xml"
     num_seconds: int = 3600
+    begin_time: int = 0   # Simulation clock second at which the RL episode starts.
+                          # Set to ~23400 for cologne3 to skip the empty pre-traffic warm-up.
     use_gui: bool = False
     delta_time: int = 5
     yellow_time: int = 2
@@ -65,6 +67,13 @@ class TrainingConfig:
     test_interval: int = 5
     save_interval: int = 10
     log_interval: int = 1
+    # When True the trainer passes a deterministic seed to every env.reset() call.
+    # Training seeds advance monotonically from config.seed * 10_000 so each epoch
+    # sees new traffic realizations while the full sequence remains reproducible.
+    # Eval seeds are drawn from a separate block (config.seed * 10_000 + 900_000)
+    # so the same n_test_envs episodes are used at every evaluation checkpoint,
+    # making epoch-to-epoch eval comparisons free of env noise.
+    use_fixed_episode_seeds: bool = True
 
 
 @dataclass

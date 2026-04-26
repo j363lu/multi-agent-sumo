@@ -17,7 +17,7 @@ from MAPPO.config import ExperimentConfig
 from MAPPO.envs import SumoTianshouEnv
 from MAPPO.networks import ActorNetwork, CentralizedCritic
 from MAPPO.agents import MAPPOPolicy, MultiAgentPolicyManager
-from MAPPO.utils import WandBLogger, save_checkpoint, MetricsTracker
+from MAPPO.utils import WandBLogger, save_checkpoint, MetricsTracker, RewardNormalizer
 from MAPPO.training.evaluator import evaluate_policy
 
 
@@ -60,7 +60,15 @@ class MAPPOTrainer:
         print(f"Number of agents: {len(self.agent_ids)}")
         print(f"Observation dim: {self.obs_dim}")
         print(f"Action dim: {self.action_dim}")
-        
+
+        # Shared reward normalizer — must be created BEFORE _create_policy_manager()
+        # so it can be injected into each MAPPOPolicy at construction time.
+        # One instance for the whole experiment so all agents contribute to the same
+        # running mean/variance.  None when reward_normalization=False.
+        self._reward_normalizer: Optional[RewardNormalizer] = (
+            RewardNormalizer() if config.mappo.reward_normalization else None
+        )
+
         # Create networks and policies
         print("Creating networks and policies...")
         self.policy_manager = self._create_policy_manager()
@@ -86,6 +94,12 @@ class MAPPOTrainer:
         self.current_epoch = 0
         self.total_steps = 0
         self.training_start_time: Optional[float] = None
+        # Monotonically increasing episode counter used to derive per-episode
+        # SUMO seeds: seed = config.seed * 10_000 + _global_episode_count.
+        # Advancing across epochs ensures each epoch sees fresh traffic
+        # realizations while the full sequence stays reproducible given the
+        # same config.seed.
+        self._global_episode_count: int = 0
 
         # CSV metrics file for offline plotting
         csv_path = os.path.join(self.log_dir, "metrics.csv")
@@ -120,6 +134,7 @@ class MAPPOTrainer:
             route_file=sumo_config.route_file,
             use_gui=sumo_config.use_gui,
             num_seconds=sumo_config.num_seconds,
+            begin_time=sumo_config.begin_time,
             delta_time=sumo_config.delta_time,
             yellow_time=sumo_config.yellow_time,
             min_green=sumo_config.min_green,
@@ -183,7 +198,10 @@ class MAPPOTrainer:
                 vf_coef=mappo_config.vf_coef,
                 ent_coef=mappo_config.ent_coef,
                 max_grad_norm=mappo_config.max_grad_norm,
-                reward_normalization=mappo_config.reward_normalization
+                reward_normalization=mappo_config.reward_normalization,
+                # Shared normalizer: all agents contribute to the same running
+                # mean/variance so normalization is consistent across agents.
+                reward_normalizer=self._reward_normalizer,
             )
             
             policies.append(policy)
@@ -270,7 +288,15 @@ class MAPPOTrainer:
         episode_lengths = []
 
         for _ in range(n_episode):
-            obs_dict, _ = env.reset()
+            # Deterministic seed cycling: each episode gets a unique seed derived
+            # from config.seed so results are reproducible across runs with the
+            # same seed, but different epochs always sample new traffic realizations.
+            if self.config.training.use_fixed_episode_seeds:
+                episode_seed = self.config.seed * 10_000 + self._global_episode_count
+                obs_dict, _ = env.reset(seed=episode_seed)
+            else:
+                obs_dict, _ = env.reset()
+            self._global_episode_count += 1
             episode_reward = 0.0
             episode_length = 0
             done = False
@@ -360,7 +386,7 @@ class MAPPOTrainer:
         global_obs      = collect_result['global_obs']       # (T, global_obs_dim)
         global_obs_next = collect_result['global_obs_next']  # (T, global_obs_dim)
 
-        for agent_id in self.agent_ids:
+        for agent_idx, agent_id in enumerate(self.agent_ids):
             policy = self.policy_manager.policies[agent_id]
 
             # Build Tianshou Batch for this agent
@@ -380,8 +406,13 @@ class MAPPOTrainer:
             # Compute GAE advantages and value targets (process_fn also recomputes logp_old)
             batch = policy.process_fn(batch, buffer=None, indices=None)
 
-            # Run PPO gradient updates (repeat passes over mini-batches)
-            stats = policy.learn(batch, batch_size=batch_size, repeat=repeat)
+            # FIX (Root Cause #1): Only the first agent updates the shared critic.
+            # All other agents update only their own actor.  This ensures the critic
+            # optimizer is stepped exactly once per mini-batch instead of N_agents
+            # times, preventing the effective LR blow-up that caused critic oscillation.
+            update_critic = (agent_idx == 0)
+            stats = policy.learn(batch, batch_size=batch_size, repeat=repeat,
+                                 update_critic=update_critic)
 
             # Accumulate stats
             all_losses.extend(stats.get('loss', []))
@@ -403,11 +434,22 @@ class MAPPOTrainer:
     
     def _evaluate(self) -> Dict[str, float]:
         """Evaluate current policy."""
+        # Eval episodes use a fixed seed block separated from training seeds.
+        # Seed block: config.seed * 10_000 + 900_000 + episode_idx.
+        # The same n_test_envs traffic realizations are used at every eval
+        # checkpoint, so epoch-to-epoch eval comparison is not confounded by
+        # env randomness.
+        eval_seed_base = (
+            self.config.seed * 10_000 + 900_000
+            if self.config.training.use_fixed_episode_seeds
+            else None
+        )
         return evaluate_policy(
             self.policy_manager,
             self.test_env,
             n_episode=self.config.training.n_test_envs,
-            device=self.device
+            device=self.device,
+            eval_seed_base=eval_seed_base
         )
     
     def _log_epoch(self, epoch: int, collect_result: Dict, train_result: Dict, epoch_time: float):

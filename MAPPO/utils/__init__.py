@@ -3,6 +3,7 @@
 from MAPPO.utils.logger import WandBLogger, setup_logging
 from MAPPO.utils.checkpoint import save_checkpoint, load_checkpoint
 from MAPPO.utils.metrics import compute_traffic_metrics, MetricsTracker
+from MAPPO.utils.reward_normalizer import RewardNormalizer
 
 __all__ = [
     "WandBLogger",
@@ -10,5 +11,6 @@ __all__ = [
     "save_checkpoint",
     "load_checkpoint",
     "compute_traffic_metrics",
-    "MetricsTracker"
+    "MetricsTracker",
+    "RewardNormalizer",
 ]

@@ -62,6 +62,7 @@ class SumoTianshouEnv:
         route_file: str,
         use_gui: bool = False,
         num_seconds: int = 3600,
+        begin_time: int = 0,
         delta_time: int = 5,
         yellow_time: int = 2,
         min_green: int = 5,
@@ -71,11 +72,15 @@ class SumoTianshouEnv:
         # Create SUMO-RL environment
         # add_system_info=True  → populates 'system_mean_waiting_time' etc. in each agent's info
         # add_per_agent_info=True → populates '{agent_id}_accumulated_waiting_time' etc.
+        # begin_time → SUMO fast-forwards the simulation clock to this second before the
+        #              RL episode starts, skipping the empty pre-traffic warm-up period
+        #              without modifying the route file (benchmark data stays intact).
         self.sumo_env = sumo_rl.parallel_env(
             net_file=net_file,
             route_file=route_file,
             use_gui=use_gui,
             num_seconds=num_seconds,
+            begin_time=begin_time,
             delta_time=delta_time,
             yellow_time=yellow_time,
             min_green=min_green,
@@ -90,6 +95,7 @@ class SumoTianshouEnv:
         self.route_file = route_file
         self.use_gui = use_gui
         self.num_seconds = num_seconds
+        self.begin_time = begin_time
         self.delta_time = delta_time
         
         # Initialize environment to get agent information

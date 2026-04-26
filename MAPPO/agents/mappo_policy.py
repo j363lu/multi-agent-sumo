@@ -15,6 +15,7 @@ from tianshou.data import Batch, ReplayBuffer
 
 from MAPPO.networks import ActorNetwork, CentralizedCritic
 from MAPPO.networks.utils import compute_gae, normalize_advantages
+from MAPPO.utils.reward_normalizer import RewardNormalizer
 
 
 class MAPPOPolicy(nn.Module):
@@ -57,6 +58,7 @@ class MAPPOPolicy(nn.Module):
         ent_coef: float = 0.01,
         max_grad_norm: float = 0.5,
         reward_normalization: bool = False,
+        reward_normalizer: Optional[RewardNormalizer] = None,
         **kwargs: Any
     ):
         super().__init__(**kwargs)
@@ -77,7 +79,10 @@ class MAPPOPolicy(nn.Module):
         self.ent_coef = ent_coef
         self.max_grad_norm = max_grad_norm
         self.reward_normalization = reward_normalization
-        
+        # Shared normalizer injected from the trainer so all agents update
+        # the same running statistics (one distribution, not N separate ones).
+        self.reward_normalizer = reward_normalizer
+
         # Agent identifier
         self._agent_id = None
         
@@ -125,6 +130,9 @@ class MAPPOPolicy(nn.Module):
         Process collected data before learning.
         
         Computes advantages using GAE and value targets.
+        Episode boundaries within a flat multi-episode buffer are handled
+        correctly: when done[t] is True at a non-final step, the TD delta
+        bootstraps to 0 (not values[t+1] from the next episode).
         
         Args:
             batch: Batch of collected transitions
@@ -153,8 +161,11 @@ class MAPPOPolicy(nn.Module):
             values = self.critic(critic_inp).squeeze(-1).cpu().numpy()
             next_values = self.critic(critic_inp_next).squeeze(-1).cpu().numpy()
         
-        # Compute advantages using GAE
+        # Optionally normalize rewards to O(1) so critic targets are bounded.
+        # update=True so running stats accumulate across all training episodes.
         rewards = batch.rew
+        if self.reward_normalization and self.reward_normalizer is not None:
+            rewards = self.reward_normalizer.normalize(rewards, update=True)
         dones = np.logical_or(batch.terminated, batch.truncated)
         
         advantages = np.zeros_like(rewards)
@@ -163,10 +174,14 @@ class MAPPOPolicy(nn.Module):
         last_gae = 0
         for t in reversed(range(len(rewards))):
             if t == len(rewards) - 1:
+                # Last step: bootstrap from next_values, masked by done
                 next_value = next_values[t] * (1.0 - dones[t])
             else:
-                next_value = values[t + 1]
-            
+                # FIX (Root Cause #2): at intermediate episode boundaries (dones[t] True
+                # but not the final step), bootstrap to 0 — not values[t+1] which belongs
+                # to the NEXT episode and would corrupt the advantage estimate.
+                next_value = values[t + 1] if not dones[t] else 0.0
+
             next_non_terminal = 1.0 - dones[t]
             delta = rewards[t] + self.gamma * next_value - values[t]
             advantages[t] = last_gae = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae
@@ -190,15 +205,21 @@ class MAPPOPolicy(nn.Module):
         batch: Batch,
         batch_size: int,
         repeat: int,
+        update_critic: bool = True,
         **kwargs: Any
     ) -> Dict[str, Any]:
         """
         Update policy using PPO algorithm.
-        
+
         Args:
             batch: Batch of transitions
             batch_size: Mini-batch size for updates
             repeat: Number of epochs to repeat
+            update_critic: If True, zero-grad, clip, and step the critic optimizer.
+                Set to False for all agents except the first in a shared-critic
+                setup so the critic is only updated once per mini-batch (not once
+                per agent), avoiding the N_agents × over-stepping that causes
+                critic loss oscillation (Root Cause #1).
             
         Returns:
             Dictionary of training statistics
@@ -248,39 +269,58 @@ class MAPPOPolicy(nn.Module):
                 else:
                     actor_loss = -torch.min(surr1, surr2).mean()
                 
-                # Critic loss
-                value = self.critic(critic_inp).squeeze(-1)
-                
-                if self.value_clip:
-                    v_clipped = v_s + torch.clamp(value - v_s, -self.eps_clip, self.eps_clip)
-                    vf1 = (ret - value).pow(2)
-                    vf2 = (ret - v_clipped).pow(2)
-                    critic_loss = torch.max(vf1, vf2).mean()
-                else:
-                    critic_loss = (ret - value).pow(2).mean()
-                
                 # Entropy bonus
                 entropy = dist.entropy().mean()
-                
-                # Total loss
-                loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * entropy
-                
-                # Update networks
-                self.optim_actor.zero_grad()
-                self.optim_critic.zero_grad()
-                loss.backward()
-                
-                if self.max_grad_norm > 0:
-                    nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
-                    nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
-                
-                self.optim_actor.step()
-                self.optim_critic.step()
+
+                if update_critic:
+                    # Full update: actor + critic
+                    value = self.critic(critic_inp).squeeze(-1)
+
+                    if self.value_clip:
+                        # WARNING: value_clip is only valid when reward_normalization=True.
+                        # With unnormalized rewards, critic values are O(reward/(1-gamma))
+                        # which can be O(100). Using eps_clip=0.2 as the clamp range will
+                        # saturate immediately, zeroing d(vf2)/d(value) and killing critic
+                        # gradient signal. Set value_clip=False when rewards are not normalized.
+                        v_clipped = v_s + torch.clamp(value - v_s, -self.eps_clip, self.eps_clip)
+                        vf1 = (ret - value).pow(2)
+                        vf2 = (ret - v_clipped).pow(2)
+                        critic_loss = torch.max(vf1, vf2).mean()
+                    else:
+                        critic_loss = (ret - value).pow(2).mean()
+
+                    loss = actor_loss + self.vf_coef * critic_loss - self.ent_coef * entropy
+
+                    self.optim_actor.zero_grad()
+                    self.optim_critic.zero_grad()
+                    loss.backward()
+
+                    if self.max_grad_norm > 0:
+                        nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+                        nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+
+                    self.optim_actor.step()
+                    self.optim_critic.step()
+
+                    critic_losses.append(critic_loss.item())
+                    losses.append(loss.item())
+                else:
+                    # Actor-only update: do NOT touch the critic optimizer.
+                    # The critic is updated exclusively by the first agent's learn() call.
+                    loss = actor_loss - self.ent_coef * entropy
+
+                    self.optim_actor.zero_grad()
+                    loss.backward()
+
+                    if self.max_grad_norm > 0:
+                        nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+
+                    self.optim_actor.step()
+
+                    losses.append(loss.item())
                 
                 # Track statistics
-                losses.append(loss.item())
                 actor_losses.append(actor_loss.item())
-                critic_losses.append(critic_loss.item())
                 entropy_losses.append(entropy.item())
                 
                 # Track clipping fraction
