@@ -129,7 +129,7 @@ def _multi_seed_eval(dfs: list[pd.DataFrame]):
                             dtype=float)
             if len(vals) == 0:
                 return np.nan, np.nan
-            return float(np.mean(vals)), float(np.std(vals))
+            return float(np.mean(vals)), float(np.std(vals, ddof=1) if len(vals) > 1 else 0.0)
 
         wt_mean, wt_std   = _agg("mean_waiting_time")
         ql_mean, ql_std   = _agg("mean_queue_length")
@@ -173,7 +173,7 @@ def _multi_seed_train(dfs: list[pd.DataFrame], smooth: int):
         rows.append({
             "epoch": epoch,
             "episode_reward_mean": float(np.mean(vals)),
-            "episode_reward_std":  float(np.std(vals)),
+            "episode_reward_std":  float(np.std(vals, ddof=1) if len(vals) > 1 else 0.0),
         })
     return pd.DataFrame(rows)
 
@@ -302,10 +302,10 @@ def plot_multi(dfs: list[pd.DataFrame], labels: list[str],
             x   = agg_ev["epoch"].values
             y   = agg_ev[mean_col].values
             std = agg_ev[std_col].values if std_col in agg_ev.columns else None
-            _shade(ax, x, y, std, agg_color, alpha=0.15)
-            ax.plot(x, y, color=agg_color, linewidth=2.2,
-                    marker="o", markersize=3.5, label="mean ± std (across seeds)",
-                    zorder=5)
+            ax.errorbar(x, y, yerr=std, fmt="-o", color=agg_color,
+                        linewidth=2.2, markersize=3.5, capsize=5,
+                        elinewidth=1.5, capthick=1.5,
+                        label="mean ± std (across seeds)", zorder=5)
             ax.legend(fontsize=8)
         _style_ax(ax, xlabel, ylabel, title)
 
@@ -318,9 +318,9 @@ def plot_multi(dfs: list[pd.DataFrame], labels: list[str],
         x   = agg_ev["wallclock_time_s"].values / 60.0
         y   = agg_ev["mean_waiting_time_mean"].values
         std = agg_ev["mean_waiting_time_std"].values
-        _shade(axes[0, 1], x, y, std, agg_color, alpha=0.15)
-        axes[0, 1].plot(x, y, color=agg_color, linewidth=2.2,
-                        marker="o", markersize=3.5, zorder=5)
+        axes[0, 1].errorbar(x, y, yerr=std, fmt="-o", color=agg_color,
+                            linewidth=2.2, markersize=3.5, capsize=5,
+                            elinewidth=1.5, capthick=1.5, zorder=5)
     _style_ax(axes[0, 1], "Wallclock Time (min)", "Avg Waiting Time (s)",
               "Waiting Time vs Wallclock Time")
 
@@ -332,9 +332,9 @@ def plot_multi(dfs: list[pd.DataFrame], labels: list[str],
         x   = agg_tr["epoch"].values
         y   = agg_tr["episode_reward_mean"].values
         std = agg_tr["episode_reward_std"].values
-        _shade(axes[1, 1], x, y, std, agg_color, alpha=0.15)
-        axes[1, 1].plot(x, y, color=agg_color, linewidth=2.2,
-                        label=f"mean ± std (rolling w={smooth})", zorder=5)
+        axes[1, 1].errorbar(x, y, yerr=std, fmt="-", color=agg_color,
+                            linewidth=2.2, capsize=5, elinewidth=1.5, capthick=1.5,
+                            label=f"mean ± std (rolling w={smooth})", zorder=5)
         axes[1, 1].legend(fontsize=8)
     _style_ax(axes[1, 1], "Epoch", "Episode Reward", "Episode Reward vs Epoch")
 
