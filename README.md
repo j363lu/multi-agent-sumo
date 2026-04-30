@@ -1,14 +1,15 @@
-# MAPPO for SUMO Traffic Signal Control
+# MAPPO and IPPO for SUMO Traffic Signal Control
 
-Multi-Agent Proximal Policy Optimization (MAPPO) implementation for cooperative traffic signal control using SUMO simulation environment.
+Multi-Agent Proximal Policy Optimization (MAPPO) and Independent Proximal Policy Optimization (IPPO) implementations for cooperative traffic signal control using the SUMO simulation environment.
 
 ## 🚦 Overview
 
-This project implements MAPPO, a state-of-the-art multi-agent reinforcement learning algorithm, for optimizing traffic signal control in urban networks. Each traffic intersection is modeled as an agent that learns to coordinate with other intersections to minimize network-wide traffic delay.
+This project implements MAPPO and an IPPO baseline for optimizing traffic signal control in urban networks. Each traffic intersection is modeled as an agent. MAPPO uses centralized training with decentralized execution, while IPPO trains each agent with its own local actor-critic learner for comparison.
 
 ### Key Features
 
 - ✅ **MAPPO Algorithm**: Centralized training with decentralized execution
+- ✅ **IPPO Baseline**: Independent PPO learners with local critics
 - ✅ **SUMO Integration**: Compatible with SUMO-RL traffic environments
 - ✅ **Tianshou Framework**: Built on the efficient Tianshou RL library
 - ✅ **WandB Logging**: Comprehensive experiment tracking
@@ -89,18 +90,34 @@ python scripts/train_mappo.py
 
 This will train MAPPO on the cologne3 scenario with default hyperparameters.
 
+To train the IPPO baseline with matching defaults:
+
+```bash
+python scripts/train_ippo.py
+```
+
 ### 2. Debug Mode (with GUI)
 
 ```bash
 python scripts/train_mappo.py --debug
 ```
 
-Enables SUMO GUI for visualization and uses faster training settings.
+Uses faster training settings for MAPPO. For IPPO:
+
+```bash
+python scripts/train_ippo.py --debug
+```
 
 ### 3. Custom Configuration
 
 ```bash
 python scripts/train_mappo.py --config configs/base_config.yaml
+```
+
+The IPPO loader accepts YAML files with an `ippo:` section. It can also read existing `mappo:` hyperparameters as a compatibility fallback:
+
+```bash
+python scripts/train_ippo.py --config configs/base_config.yaml
 ```
 
 ### 4. Evaluate Trained Model
@@ -109,11 +126,17 @@ python scripts/train_mappo.py --config configs/base_config.yaml
 python scripts/evaluate.py --checkpoint logs/experiment_name/checkpoints/checkpoint_epoch_100.pt --use-gui
 ```
 
+Evaluate an IPPO checkpoint with:
+
+```bash
+python scripts/evaluate_ippo.py --checkpoint logs/experiment_name/checkpoints/checkpoint_epoch_100.pt --use-gui
+```
+
 ## 📁 Project Structure
 
 ```
 multi-agent-sumo/
-├── MAPPO/              # Main package
+├── MAPPO/              # MAPPO package
 │   ├── agents/                 # MAPPO policy and manager
 │   │   ├── mappo_policy.py     # MAPPO policy implementation
 │   │   └── multi_agent_manager.py  # Multi-agent coordination
@@ -134,9 +157,20 @@ multi-agent-sumo/
 │       ├── checkpoint.py       # Save/load checkpoints
 │       ├── logger.py           # WandB logger
 │       └── metrics.py          # Traffic metrics
+├── IPPO/                       # IPPO baseline package
+│   ├── agents/                 # IPPO policy and manager
+│   │   ├── ippo_policy.py      # Independent PPO policy implementation
+│   │   └── multi_agent_manager.py  # Multi-agent dispatch
+│   ├── config/                 # IPPO configuration system
+│   ├── envs/                   # Environment wrappers
+│   ├── networks/               # Actor and local critic networks
+│   ├── training/               # IPPO trainer and evaluator
+│   └── utils/                  # Checkpointing, logging, and metrics
 ├── scripts/                    # Executable scripts
-│   ├── train_mappo.py          # Training script
-│   └── evaluate.py             # Evaluation script
+│   ├── train_mappo.py          # MAPPO training script
+│   ├── train_ippo.py           # IPPO training script
+│   ├── evaluate.py             # MAPPO evaluation script
+│   └── evaluate_ippo.py        # IPPO evaluation script
 ├── configs/                    # Configuration files
 │   ├── base_config.yaml        # Default configuration
 │   └── debug_config.yaml       # Debug configuration
@@ -156,29 +190,39 @@ multi-agent-sumo/
 ### Training Options
 
 ```bash
-# Basic training
+# Basic MAPPO training
 python scripts/train_mappo.py
+
+# Basic IPPO training
+python scripts/train_ippo.py
 
 # With GUI visualization
 python scripts/train_mappo.py --use-gui
+python scripts/train_ippo.py --use-gui
 
 # Custom configuration
 python scripts/train_mappo.py --config configs/base_config.yaml
+python scripts/train_ippo.py --config configs/base_config.yaml
 
 # Override specific parameters
 python scripts/train_mappo.py --max-epoch 200 --seed 123
+python scripts/train_ippo.py --max-epoch 200 --seed 123
 
 # Fast test run
 python scripts/train_mappo.py --fast-test
+python scripts/train_ippo.py --fast-test
 
 # Disable WandB logging
 python scripts/train_mappo.py --no-wandb
+python scripts/train_ippo.py --no-wandb
 ```
 
 ### Full Training Arguments
 
 ```bash
 python scripts/train_mappo.py --help
+# or
+python scripts/train_ippo.py --help
 
 Arguments:
   --config CONFIG           Path to YAML config file
@@ -199,17 +243,23 @@ Arguments:
 ### Evaluation Options
 
 ```bash
-# Evaluate trained model
+# Evaluate trained MAPPO model
 python scripts/evaluate.py --checkpoint path/to/checkpoint.pt
+
+# Evaluate trained IPPO model
+python scripts/evaluate_ippo.py --checkpoint path/to/checkpoint.pt
 
 # With GUI visualization
 python scripts/evaluate.py --checkpoint path/to/checkpoint.pt --use-gui
+python scripts/evaluate_ippo.py --checkpoint path/to/checkpoint.pt --use-gui
 
 # Multiple episodes
 python scripts/evaluate.py --checkpoint path/to/checkpoint.pt --n-episode 20
+python scripts/evaluate_ippo.py --checkpoint path/to/checkpoint.pt --n-episode 20
 
 # Compare with baseline
 python scripts/evaluate.py --checkpoint path/to/checkpoint.pt --compare-baseline
+python scripts/evaluate_ippo.py --checkpoint path/to/checkpoint.pt --compare-baseline
 ```
 
 ## ⚙️ Configuration
@@ -237,7 +287,7 @@ network:
   use_orthogonal_init: true
 ```
 
-#### 3. MAPPO Hyperparameters
+#### 3. MAPPO/IPPO Hyperparameters
 ```yaml
 mappo:
   lr_actor: 0.0003
@@ -251,6 +301,24 @@ mappo:
   ent_coef: 0.01
   max_grad_norm: 0.5
 ```
+
+For IPPO-specific config files, use the same fields under `ippo:`:
+
+```yaml
+ippo:
+  lr_actor: 0.0003
+  lr_critic: 0.001
+  gamma: 0.99
+  gae_lambda: 0.95
+  eps_clip: 0.2
+  value_clip: true
+  advantage_normalization: true
+  vf_coef: 0.5
+  ent_coef: 0.01
+  max_grad_norm: 0.5
+```
+
+`scripts/train_ippo.py` can also load an existing `mappo:` section as a compatibility fallback, which makes it easy to compare MAPPO and IPPO with the same hyperparameters.
 
 #### 4. Training Settings
 ```yaml
@@ -270,7 +338,9 @@ training:
 
 1. **Initialization**: 
    - Creates SUMO environments
-   - Initializes actor and centralized critic networks
+   - Initializes actor and critic networks
+   - MAPPO uses a shared centralized critic
+   - IPPO uses one local critic per agent
    - Sets up optimizers and replay buffers
 
 2. **Data Collection**:
@@ -281,7 +351,7 @@ training:
    - Sample mini-batches from buffer
    - Compute advantages using GAE
    - Update actors with PPO objective
-   - Update centralized critic
+   - Update the centralized MAPPO critic or each IPPO agent's local critic
 
 4. **Evaluation**:
    - Periodically evaluate on test environment
@@ -319,6 +389,15 @@ python scripts/evaluate.py \
     --use-gui
 ```
 
+For IPPO checkpoints:
+
+```bash
+python scripts/evaluate_ippo.py \
+    --checkpoint logs/experiment/checkpoints/checkpoint_epoch_100.pt \
+    --n-episode 10 \
+    --use-gui
+```
+
 ### Evaluation Metrics
 
 - **Mean Reward**: Episode return
@@ -336,17 +415,21 @@ python scripts/evaluate.py \
     --compare-baseline
 ```
 
+Use `scripts/evaluate_ippo.py` for IPPO checkpoints.
+
 ## 📈 Results
 
 ### Expected Performance
 
 After 100 epochs of training on cologne3:
 
-| Metric | Random Policy | MAPPO (Expected) |
-|--------|--------------|------------------|
-| Avg Waiting Time | ~200-300s | ~100-150s |
-| Avg Queue Length | ~15-20 vehicles | ~8-12 vehicles |
-| Episode Reward | Variable | Improving |
+| Metric | Random Policy | IPPO Baseline | MAPPO (Expected) |
+|--------|--------------|---------------|------------------|
+| Avg Waiting Time | ~200-300s | Scenario-dependent | ~100-150s |
+| Avg Queue Length | ~15-20 vehicles | Scenario-dependent | ~8-12 vehicles |
+| Episode Reward | Variable | Improving baseline | Improving |
+
+IPPO is intended as the decentralized PPO baseline. Because each agent only learns from local observations and a local value function, it is useful for measuring the benefit of MAPPO's centralized critic.
 
 ### Visualizing Results
 
@@ -379,12 +462,18 @@ RuntimeError: CUDA out of memory
 ```bash
 python scripts/train_mappo.py --device cpu
 # or
+python scripts/train_ippo.py --device cpu
+# or
 python scripts/train_mappo.py --config configs/base_config.yaml  # Edit batch_size
 ```
 
 #### 3. Import Errors
 ```
 ModuleNotFoundError: No module named 'MAPPO'
+```
+or
+```
+ModuleNotFoundError: No module named 'IPPO'
 ```
 **Solution**: Install dependencies and add project to PYTHONPATH
 ```bash
@@ -404,6 +493,8 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 For troubleshooting, use debug mode:
 ```bash
 python scripts/train_mappo.py --debug
+# or
+python scripts/train_ippo.py --debug
 ```
 
 This enables:
@@ -421,6 +512,13 @@ This enables:
 - **Training**: Centralized critic sees all agent observations
 - **Execution**: Each agent acts based on local observations only
 
+### IPPO Overview
+
+**Independent PPO Baseline**:
+- **Training**: Each agent has its own actor, local critic, and optimizer
+- **Execution**: Each agent acts from its local observation only
+- **Purpose**: Provides a decentralized baseline to compare against MAPPO's centralized critic
+
 ### Key Components
 
 1. **Actor Network** ([`actor.py`](MAPPO/networks/actor.py))
@@ -433,15 +531,29 @@ This enables:
    - Output: Value estimate for global state
    - Shared across all agents
 
+   **IPPO Local Critic** ([`critic.py`](IPPO/networks/critic.py))
+   - Input: One agent's local observation
+   - Output: Value estimate for that agent's local state
+   - One critic per agent
+
 3. **MAPPO Policy** ([`mappo_policy.py`](MAPPO/agents/mappo_policy.py))
    - PPO update with clipped objective
    - GAE for advantage estimation
    - Entropy bonus for exploration
 
+   **IPPO Policy** ([`ippo_policy.py`](IPPO/agents/ippo_policy.py))
+   - Same PPO clipped objective
+   - GAE with local critic values
+   - Independent actor-critic updates per agent
+
 4. **Multi-Agent Manager** ([`multi_agent_manager.py`](MAPPO/agents/multi_agent_manager.py))
    - Coordinates multiple agents
    - Manages state aggregation for critic
    - Dispatches observations to policies
+
+   **IPPO Multi-Agent Manager** ([`multi_agent_manager.py`](IPPO/agents/multi_agent_manager.py))
+   - Dispatches observations to independent policies
+   - Does not build a global critic input
 
 ### Reward Structure
 
@@ -461,11 +573,13 @@ This encourages reducing cumulative vehicle delay at intersections.
 3. Train:
 ```bash
 python scripts/train_mappo.py --net-file RESCO/new_scenario/network.net.xml --route-file RESCO/new_scenario/routes.rou.xml
+# or
+python scripts/train_ippo.py --net-file RESCO/new_scenario/network.net.xml --route-file RESCO/new_scenario/routes.rou.xml
 ```
 
 ### Modifying Reward Function
 
-Edit [`MAPPO/envs/sumo_env_wrapper.py`](MAPPO/envs/sumo_env_wrapper.py) to implement custom rewards.
+Edit [`MAPPO/envs/sumo_env_wrapper.py`](MAPPO/envs/sumo_env_wrapper.py) or [`IPPO/envs/sumo_env_wrapper.py`](IPPO/envs/sumo_env_wrapper.py) to implement custom rewards.
 
 ### Hyperparameter Tuning
 
@@ -481,16 +595,16 @@ If you use this implementation in your research, please cite:
 
 ```bibtex
 @software{mappo_sumo_traffic,
-  title = {MAPPO for SUMO Traffic Signal Control},
+  title = {MAPPO and IPPO for SUMO Traffic Signal Control},
   year = {2026},
-  note = {Implementation of Multi-Agent PPO for traffic management}
+  note = {Implementation of MAPPO and IPPO for traffic management}
 }
 ```
 
 ### References
 
 1. **MAPPO**: Yu et al. (2021) - "The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games"
-2. **PPO**: Schulman et al. (2017) - "Proximal Policy Optimization Algorithms"
+2. **IPPO/PPO**: Schulman et al. (2017) - "Proximal Policy Optimization Algorithms"
 3. **SUMO-RL**: Alegre (2019) - "SUMO-RL"
 4. **Traffic Control**: Ault & Sharon (2021) - "Reinforcement Learning Benchmarks for Traffic Signal Control"
 
