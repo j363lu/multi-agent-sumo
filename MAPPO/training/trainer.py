@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from torch.optim import Adam
 from tianshou.data import Batch
+from tqdm import tqdm
 
 from MAPPO.config import ExperimentConfig
 from MAPPO.envs import SumoTianshouEnv
@@ -107,6 +108,8 @@ class MAPPOTrainer:
         self._csv_fields = [
             "epoch", "split", "wallclock_time_s",
             "episode_reward", "episode_length",
+            "mean_waiting_time", "std_waiting_time",
+            "mean_queue_length", "std_queue_length",
             "loss", "actor_loss", "critic_loss", "entropy", "clip_frac",
         ]
         self._csv_writer = csv.DictWriter(
@@ -117,13 +120,20 @@ class MAPPOTrainer:
         print("Trainer initialized successfully!")
     
     def _set_seeds(self, seed: int):
-        """Set random seeds for reproducibility."""
-        np.random.seed(seed)
-        torch.manual_seed(seed)
+        """Set random seeds for reproducibility.
+
+        Network weight initialisation always uses a fixed seed (0) so model
+        weights are identical across runs with different config.seed values.
+        config.seed continues to control episode/environment randomness.
+        """
+        weight_init_seed = 0
+        torch.manual_seed(weight_init_seed)
         if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed(weight_init_seed)
         if torch.backends.mps.is_available():
-            torch.mps.manual_seed(seed)
+            torch.mps.manual_seed(weight_init_seed)
+
+        np.random.seed(seed)
     
     def _create_env(self, sumo_config, num_envs: int = 1) -> SumoTianshouEnv:
         """Create SUMO environment."""
@@ -225,7 +235,8 @@ class MAPPOTrainer:
         
         config = self.config.training
         
-        for epoch in range(config.max_epoch):
+        epoch_pbar = tqdm(range(config.max_epoch), desc="Training", unit="epoch")
+        for epoch in epoch_pbar:
             self.current_epoch = epoch
             epoch_start_time = time.time()
             
@@ -247,12 +258,17 @@ class MAPPOTrainer:
             
             # Log training metrics
             epoch_time = time.time() - epoch_start_time
-            self._log_epoch(epoch, collect_result, train_result, epoch_time)
+            self._log_epoch(epoch + 1, collect_result, train_result, epoch_time)
+
+            epoch_pbar.set_postfix({
+                "rew": f"{collect_result['episode_reward']:.2f}",
+                "loss": f"{train_result['loss']:.4f}",
+            })
             
             # Evaluation
             if (epoch + 1) % config.test_interval == 0:
                 eval_result = self._evaluate()
-                self._log_evaluation(epoch, eval_result)
+                self._log_evaluation(epoch + 1, eval_result)
             
             # Save checkpoint
             if (epoch + 1) % config.save_interval == 0:
@@ -287,7 +303,7 @@ class MAPPOTrainer:
         episode_rewards = []
         episode_lengths = []
 
-        for _ in range(n_episode):
+        for _ in tqdm(range(n_episode), desc="Collecting", unit="ep", leave=False):
             # Deterministic seed cycling: each episode gets a unique seed derived
             # from config.seed so results are reproducible across runs with the
             # same seed, but different epochs always sample new traffic realizations.
@@ -504,10 +520,14 @@ class MAPPOTrainer:
 
         # Write CSV row for this evaluation checkpoint
         self._csv_writer.writerow({
-            "epoch":            epoch,
-            "split":            "eval",
-            "wallclock_time_s": round(wallclock_time, 3),
-            "episode_reward":   eval_result.get('mean_reward', ''),
+            "epoch":              epoch,
+            "split":              "eval",
+            "wallclock_time_s":   round(wallclock_time, 3),
+            "episode_reward":     eval_result.get('mean_reward', ''),
+            "mean_waiting_time":  eval_result.get('mean_waiting_time', ''),
+            "std_waiting_time":   eval_result.get('std_waiting_time', ''),
+            "mean_queue_length":  eval_result.get('mean_queue_length', ''),
+            "std_queue_length":   eval_result.get('std_queue_length', ''),
         })
         self._csv_file.flush()
 
