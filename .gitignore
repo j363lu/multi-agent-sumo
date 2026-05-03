@@ -6,3 +6,5 @@ miscellaneous/
 
 # Training logs and checkpoints
 logs/
+
+__pycache__/
