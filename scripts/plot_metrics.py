@@ -192,13 +192,14 @@ PALETTE = [
 ]
 
 
-def plot_single(df: pd.DataFrame, label: str, smooth: int, out_dir: str, show: bool):
+def plot_single(df: pd.DataFrame, label: str, smooth: int, out_dir: str, show: bool,
+                title: str | None = None):
     """Plot a single CSV run — no cross-seed variance."""
     ev = _single_seed_eval(df)
     tr = _single_seed_train(df)
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 9))
-    fig.suptitle(f"Training Metrics — {label}", fontsize=13, fontweight="bold", y=1.01)
+    fig.suptitle(title or f"Training Metrics — {label}", fontsize=13, fontweight="bold", y=1.01)
 
     color = PALETTE[0]
 
@@ -210,7 +211,7 @@ def plot_single(df: pd.DataFrame, label: str, smooth: int, out_dir: str, show: b
         std = ev["std_waiting_time"].values if "std_waiting_time" in ev.columns else None
         _shade(ax, x, y, std, color)
         ax.plot(x, y, color=color, linewidth=1.8, marker="o", markersize=3, label=label)
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=8, loc="best")
     else:
         ax.text(0.5, 0.5, "No waiting-time data\n(run eval to populate)",
                 ha="center", va="center", transform=ax.transAxes, color="grey")
@@ -224,7 +225,8 @@ def plot_single(df: pd.DataFrame, label: str, smooth: int, out_dir: str, show: b
         y   = ev["mean_waiting_time"].values
         std = ev["std_waiting_time"].values if "std_waiting_time" in ev.columns else None
         _shade(ax, x, y, std, color)
-        ax.plot(x, y, color=color, linewidth=1.8, marker="o", markersize=3)
+        ax.plot(x, y, color=color, linewidth=1.8, marker="o", markersize=3, label=label)
+        ax.legend(fontsize=8, loc="best")
     else:
         ax.text(0.5, 0.5, "No waiting-time data", ha="center", va="center",
                 transform=ax.transAxes, color="grey")
@@ -238,7 +240,8 @@ def plot_single(df: pd.DataFrame, label: str, smooth: int, out_dir: str, show: b
         y   = ev["mean_queue_length"].values
         std = ev["std_queue_length"].values if "std_queue_length" in ev.columns else None
         _shade(ax, x, y, std, color)
-        ax.plot(x, y, color=color, linewidth=1.8, marker="o", markersize=3)
+        ax.plot(x, y, color=color, linewidth=1.8, marker="o", markersize=3, label=label)
+        ax.legend(fontsize=8, loc="best")
     else:
         ax.text(0.5, 0.5, "No queue-length data", ha="center", va="center",
                 transform=ax.transAxes, color="grey")
@@ -252,8 +255,8 @@ def plot_single(df: pd.DataFrame, label: str, smooth: int, out_dir: str, show: b
         y_smth = _rolling_mean(tr["episode_reward"], smooth).values
         ax.plot(x_raw, y_raw, color=color, linewidth=0.6, alpha=0.3)
         ax.plot(x_raw, y_smth, color=color, linewidth=1.8,
-                label=f"rolling mean (w={smooth})")
-        ax.legend(fontsize=8)
+                label=f"{label} — rolling mean (w={smooth})")
+        ax.legend(fontsize=8, loc="best")
     else:
         ax.text(0.5, 0.5, "No reward data", ha="center", va="center",
                 transform=ax.transAxes, color="grey")
@@ -264,10 +267,11 @@ def plot_single(df: pd.DataFrame, label: str, smooth: int, out_dir: str, show: b
 
 
 def plot_multi(dfs: list[pd.DataFrame], labels: list[str],
-               smooth: int, out_dir: str, show: bool):
+               smooth: int, out_dir: str, show: bool,
+               title: str | None = None):
     """Plot multiple runs with per-seed lines and cross-seed variance shading."""
     fig, axes = plt.subplots(2, 2, figsize=(13, 9))
-    fig.suptitle("Training Metrics — Multi-Seed Comparison",
+    fig.suptitle(title or "Training Metrics — Multi-Seed Comparison",
                  fontsize=13, fontweight="bold", y=1.01)
 
     # ── draw individual seed traces (thin, faint) ─────────────────────────
@@ -281,16 +285,16 @@ def plot_multi(dfs: list[pd.DataFrame], labels: list[str],
                             color=color, linewidth=0.7, alpha=0.45, label=label)
             if "wallclock_time_s" in ev.columns:
                 axes[0, 1].plot(ev["wallclock_time_s"] / 60.0, ev["mean_waiting_time"],
-                                color=color, linewidth=0.7, alpha=0.45)
+                                color=color, linewidth=0.7, alpha=0.45, label=label)
 
         if "mean_queue_length" in ev.columns and ev["mean_queue_length"].notna().any():
             axes[1, 0].plot(ev["epoch"], ev["mean_queue_length"],
-                            color=color, linewidth=0.7, alpha=0.45)
+                            color=color, linewidth=0.7, alpha=0.45, label=label)
 
         if "episode_reward" in tr.columns and tr["episode_reward"].notna().any():
             y_smth = _rolling_mean(tr["episode_reward"], smooth).values
             axes[1, 1].plot(tr["epoch"], y_smth,
-                            color=color, linewidth=0.7, alpha=0.45)
+                            color=color, linewidth=0.7, alpha=0.45, label=label)
 
     # ── draw cross-seed aggregate (bold mean + shaded std) ────────────────
     agg_ev = _multi_seed_eval(dfs)
@@ -306,7 +310,7 @@ def plot_multi(dfs: list[pd.DataFrame], labels: list[str],
                         linewidth=2.2, markersize=3.5, capsize=5,
                         elinewidth=1.5, capthick=1.5,
                         label="mean ± std (across seeds)", zorder=5)
-            ax.legend(fontsize=8)
+            ax.legend(fontsize=8, loc="best")
         _style_ax(ax, xlabel, ylabel, title)
 
     _plot_agg_eval(axes[0, 0],
@@ -320,7 +324,9 @@ def plot_multi(dfs: list[pd.DataFrame], labels: list[str],
         std = agg_ev["mean_waiting_time_std"].values
         axes[0, 1].errorbar(x, y, yerr=std, fmt="-o", color=agg_color,
                             linewidth=2.2, markersize=3.5, capsize=5,
-                            elinewidth=1.5, capthick=1.5, zorder=5)
+                            elinewidth=1.5, capthick=1.5,
+                            label="mean ± std (across seeds)", zorder=5)
+        axes[0, 1].legend(fontsize=7, loc="best")
     _style_ax(axes[0, 1], "Wallclock Time (min)", "Avg Waiting Time (s)",
               "Waiting Time vs Wallclock Time")
 
@@ -335,11 +341,13 @@ def plot_multi(dfs: list[pd.DataFrame], labels: list[str],
         axes[1, 1].errorbar(x, y, yerr=std, fmt="-", color=agg_color,
                             linewidth=2.2, capsize=5, elinewidth=1.5, capthick=1.5,
                             label=f"mean ± std (rolling w={smooth})", zorder=5)
-        axes[1, 1].legend(fontsize=8)
+        axes[1, 1].legend(fontsize=8, loc="best")
     _style_ax(axes[1, 1], "Epoch", "Episode Reward", "Episode Reward vs Epoch")
 
-    # Add per-seed legend to subplot [0,0]
-    axes[0, 0].legend(fontsize=7, loc="upper right")
+    # Add per-seed legend to all subplots
+    axes[0, 0].legend(fontsize=7, loc="best")
+    axes[1, 0].legend(fontsize=7, loc="best")
+    axes[1, 1].legend(fontsize=7, loc="best")
 
     fig.tight_layout()
     _save_and_show(fig, out_dir, "metrics_overview.png", show)
@@ -412,6 +420,12 @@ def parse_args():
         "--show", action="store_true",
         help="Display the figure interactively (requires a display).",
     )
+    p.add_argument(
+        "--title", default=None, metavar="TEXT",
+        help="Override the figure suptitle. "
+             "Defaults to 'Training Metrics — <label>' (single) or "
+             "'Training Metrics — Multi-Seed Comparison' (multi).",
+    )
     return p.parse_args()
 
 
@@ -467,9 +481,9 @@ def main():
     print(f"[plot_metrics] Loaded {len(dfs)} CSV(s)")
 
     if len(dfs) == 1:
-        plot_single(dfs[0], labels[0], args.smooth, out_dir, args.show)
+        plot_single(dfs[0], labels[0], args.smooth, out_dir, args.show, title=args.title)
     else:
-        plot_multi(dfs, labels, args.smooth, out_dir, args.show)
+        plot_multi(dfs, labels, args.smooth, out_dir, args.show, title=args.title)
 
     print("[plot_metrics] Done.")
 
