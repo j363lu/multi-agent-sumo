@@ -1,244 +1,334 @@
 # MAPPO for SUMO Traffic Signal Control
 
-Multi-Agent Proximal Policy Optimization (MAPPO) implementation for cooperative traffic signal control using SUMO simulation environment.
+Multi-Agent Proximal Policy Optimization (MAPPO) implementation for cooperative traffic signal control using the SUMO simulation environment.
 
-## 🚦 Overview
+## Overview
 
-This project implements MAPPO, a state-of-the-art multi-agent reinforcement learning algorithm, for optimizing traffic signal control in urban networks. Each traffic intersection is modeled as an agent that learns to coordinate with other intersections to minimize network-wide traffic delay.
+This project implements MAPPO — a state-of-the-art multi-agent reinforcement learning algorithm — for optimizing traffic signal control in urban networks. Each traffic intersection is modeled as an independent agent that learns to coordinate with other intersections to minimize network-wide vehicle waiting time and queue length.
 
-### Key Features
+Two variants are provided for comparison:
 
-- ✅ **MAPPO Algorithm**: Centralized training with decentralized execution
-- ✅ **SUMO Integration**: Compatible with SUMO-RL traffic environments
-- ✅ **Tianshou Framework**: Built on the efficient Tianshou RL library
-- ✅ **WandB Logging**: Comprehensive experiment tracking
-- ✅ **Flexible Configuration**: YAML-based configuration system
-- ✅ **GPU Support**: CUDA-accelerated training
-- ✅ **GUI & Headless**: Support for both visualization and fast training modes
+| Variant | Module | Description |
+|---------|--------|-------------|
+| **Baseline** | `MAPPO/` | Standard MLP centralized critic |
+| **Critic-BN** | `MAPPO_BN/` | Centralized critic with `BatchNorm1d` before each hidden activation (BN experiment) |
 
-## 📋 Table of Contents
+Both variants share the same actor architecture, environment wrapper, and training loop. Only the critic network differs.
 
+## Table of Contents
+
+- [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
-- [Usage](#usage)
-- [Configuration](#configuration)
 - [Training](#training)
 - [Evaluation](#evaluation)
-- [Results](#results)
-- [Troubleshooting](#troubleshooting)
-- [Citation](#citation)
+- [Plotting Metrics](#plotting-metrics)
+- [Experiment Sweeps](#experiment-sweeps)
+- [Configuration Reference](#configuration-reference)
 
-## 🔧 Installation
+---
 
-### Prerequisites
+## Prerequisites
 
-1. **SUMO**: Install SUMO simulation environment
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install sumo sumo-tools sumo-doc
-   
-   # macOS (using Homebrew)
-   brew install sumo
-   
-   # Windows: Download from https://eclipse.dev/sumo/
-   ```
+### 1. Python
 
-2. **Set SUMO_HOME environment variable** *(optional — auto-detected if not set)*:
+Python 3.8–3.10 is recommended.
 
-   The training and evaluation scripts automatically detect `SUMO_HOME` and `PROJ_DATA`
-   from the installed `sumo` Python package, so **no manual configuration is required**
-   as long as you install dependencies via `pip install -r requirements.txt`.
+### 2. SUMO
 
-   If you want to set them permanently anyway (e.g. for tools outside this project):
-   ```bash
-   # Auto-detect the correct path from the installed package
-   export SUMO_HOME=$(python -c "import sumo, os; print(os.path.dirname(sumo.__file__))")
-   export PROJ_DATA=$SUMO_HOME/data/proj
-
-   # Add the above lines to ~/.bashrc or ~/.zshrc to make them permanent
-   ```
-
-### Install Dependencies
+Install the SUMO traffic simulator:
 
 ```bash
-# Clone the repository (if applicable)
-# cd multi-agent-sumo
+# macOS (Homebrew)
+brew install sumo
 
-# Install Python dependencies
+# Ubuntu / Debian
+sudo apt-get install sumo sumo-tools sumo-doc
+
+# Windows
+# Download installer from https://eclipse.dev/sumo/
+```
+
+> **Note:** `SUMO_HOME` and `PROJ_DATA` are auto-detected from the installed `sumo` Python package at runtime. You do **not** need to set these environment variables manually.
+
+---
+
+## Installation
+
+### Option A — Automated setup (recommended)
+
+A setup script creates a dedicated virtual environment and installs all dependencies:
+
+```bash
+# macOS / Linux
+bash setup_MAPPO_venv.sh
+
+# Windows
+setup_MAPPO_venv.bat
+```
+
+Activate the environment before running any scripts:
+
+```bash
+# macOS / Linux
+source MAPPO_venv/bin/activate
+
+# Windows
+MAPPO_venv\Scripts\activate
+```
+
+### Option B — Manual install into an existing environment
+
+```bash
 pip install -r requirements.txt
 ```
 
-### Verify Installation
+### Verify the installation
 
 ```bash
-# Test SUMO installation
-sumo --version
-
-# Test Python environment
-python -c "import sumo_rl, torch, tianshou; print('All dependencies OK!')"
+python -c "import sumo_rl, torch, tianshou; print('All dependencies OK')"
 ```
 
-## 🚀 Quick Start
+---
 
-### 1. Run with Default Configuration
-
-```bash
-python scripts/train_mappo.py
-```
-
-This will train MAPPO on the cologne3 scenario with default hyperparameters.
-
-### 2. Debug Mode (with GUI)
-
-```bash
-python scripts/train_mappo.py --debug
-```
-
-Enables SUMO GUI for visualization and uses faster training settings.
-
-### 3. Custom Configuration
-
-```bash
-python scripts/train_mappo.py --config configs/base_config.yaml
-```
-
-### 4. Evaluate Trained Model
-
-```bash
-python scripts/evaluate.py --checkpoint logs/experiment_name/checkpoints/checkpoint_epoch_100.pt --use-gui
-```
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 multi-agent-sumo/
-├── MAPPO/              # Main package
-│   ├── agents/                 # MAPPO policy and manager
-│   │   ├── mappo_policy.py     # MAPPO policy implementation
-│   │   └── multi_agent_manager.py  # Multi-agent coordination
-│   ├── config/                 # Configuration system
+├── MAPPO/                      # Baseline variant (standard MLP critic)
+│   ├── agents/
+│   │   ├── mappo_policy.py     # MAPPO policy (actor + critic update)
+│   │   └── multi_agent_manager.py
+│   ├── config/
 │   │   ├── config.py           # Config dataclasses
-│   │   └── default_configs.py  # Preset configurations
-│   ├── envs/                   # Environment wrappers
-│   │   ├── sumo_env_wrapper.py # SUMO-Tianshou adapter
-│   │   └── env_utils.py        # Environment utilities
-│   ├── networks/               # Neural networks
-│   │   ├── actor.py            # Actor network (discrete actions)
+│   │   └── default_configs.py  # Preset configs (default, debug, fast-test)
+│   ├── envs/
+│   │   ├── sumo_env_wrapper.py # SUMO ↔ Tianshou adapter
+│   │   └── env_utils.py
+│   ├── networks/
+│   │   ├── actor.py            # Decentralized actor (per-agent)
 │   │   ├── critic.py           # Centralized critic
-│   │   └── utils.py            # Network utilities
-│   ├── training/               # Training infrastructure
-│   │   ├── trainer.py          # Main trainer class
-│   │   └── evaluator.py        # Policy evaluation
-│   └── utils/                  # Utilities
-│       ├── checkpoint.py       # Save/load checkpoints
-│       ├── logger.py           # WandB logger
-│       └── metrics.py          # Traffic metrics
-├── scripts/                    # Executable scripts
-│   ├── train_mappo.py          # Training script
-│   └── evaluate.py             # Evaluation script
-├── configs/                    # Configuration files
-│   ├── base_config.yaml        # Default configuration
-│   └── debug_config.yaml       # Debug configuration
-├── RESCO/                      # SUMO scenarios
-│   └── cologne3/               # Cologne network
-│       ├── cologne3.net.xml    # Network definition
-│       └── cologne3.rou.xml    # Traffic routes
-├── IMPLEMENTATION_PLAN.md      # Detailed implementation plan
-├── PLAN_SUMMARY.md             # Quick reference guide
-├── requirements.txt            # Python dependencies
-├── main.py                     # Original simple example
-└── README.md                   # This file
+│   │   └── utils.py
+│   ├── training/
+│   │   ├── trainer.py          # MAPPOTrainer
+│   │   └── evaluator.py
+│   └── utils/
+│       ├── checkpoint.py       # Save / load checkpoints
+│       ├── logger.py           # CSV metrics logger
+│       ├── metrics.py          # Traffic metrics helpers
+│       └── reward_normalizer.py
+├── MAPPO_BN/                   # Critic-BN variant (BatchNorm1d on critic)
+│   └── ...                     # Same structure as MAPPO/
+├── scripts/
+│   ├── train_mappo.py          # Main training entry-point
+│   ├── evaluate.py             # Evaluate a saved checkpoint
+│   ├── plot_metrics.py         # Plot training curves from CSV logs
+│   └── run_experiment_sweep.py # Parallel multi-seed sweep launcher
+├── configs/
+│   ├── base_config.yaml        # Default full-run config (baseline)
+│   ├── critic_bn_config.yaml   # Critic-BN variant config
+│   └── debug_config.yaml       # Quick debug config (5 epochs, CPU)
+├── RESCO/
+│   └── cologne3/               # Cologne 3-intersection SUMO scenario
+│       ├── cologne3.net.xml
+│       └── cologne3.rou.xml
+├── plots/                      # Output plots directory
+├── requirements.txt
+├── setup_MAPPO_venv.sh
+├── setup_MAPPO_venv.bat
+└── main.py                     # Minimal standalone SUMO-RL example
 ```
 
-## 💻 Usage
+---
 
-### Training Options
+## Training
+
+All training is launched through [`scripts/train_mappo.py`](scripts/train_mappo.py).
+
+### Quick start
 
 ```bash
-# Basic training
+# Baseline — default config (100 epochs, cologne3)
 python scripts/train_mappo.py
 
-# With GUI visualization
-python scripts/train_mappo.py --use-gui
+# Critic-BN variant
+python scripts/train_mappo.py --use-critic-bn
 
-# Custom configuration
+# Load a YAML config file
 python scripts/train_mappo.py --config configs/base_config.yaml
 
-# Override specific parameters
-python scripts/train_mappo.py --max-epoch 200 --seed 123
+# Debug mode (5 epochs, small networks, CPU)
+python scripts/train_mappo.py --debug
 
-# Fast test run
+# Fast smoke-test (short episodes, no GUI)
 python scripts/train_mappo.py --fast-test
 
-# Disable WandB logging
-python scripts/train_mappo.py --no-wandb
+# Enable SUMO GUI (requires display / XQuartz on macOS)
+python scripts/train_mappo.py --use-gui
 ```
 
-### Full Training Arguments
+### Full argument reference
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--config FILE` | str | — | Path to a YAML config file |
+| `--debug` | flag | off | Use built-in debug preset (5 epochs, CPU, small nets) |
+| `--fast-test` | flag | off | Use built-in fast-test preset (short episodes, headless) |
+| `--use-critic-bn` | flag | off | Enable BatchNorm1d on the centralized critic (BN experiment) |
+| `--use-gui` | flag | off | Launch SUMO with GUI |
+| `--num-seconds N` | int | from config | Override simulation duration (seconds) |
+| `--net-file FILE` | str | from config | Override SUMO network file |
+| `--route-file FILE` | str | from config | Override SUMO route file |
+| `--max-epoch N` | int | from config | Override number of training epochs |
+| `--seed N` | int | from config | Random seed |
+| `--device {cpu,cuda,mps}` | str | from config | Compute device |
+| `--experiment-name NAME` | str | auto | Name shown in log directory |
+| `--log-dir DIR` | str | `logs` | Root directory for run logs |
+
+### Training output
+
+Each run creates a timestamped directory under `logs/`:
+
+```
+logs/
+└── mappo_seed42_20260503_142301/
+    ├── config.json        # Saved config for reproducibility
+    ├── metrics.csv        # Per-epoch training and evaluation metrics
+    └── checkpoints/
+        ├── checkpoint_epoch_10.pt
+        ├── checkpoint_epoch_20.pt
+        └── best_checkpoint.pt
+```
+
+`metrics.csv` columns include: `epoch`, `wallclock_time_s`, `episode_reward`, `episode_length`, `mean_waiting_time`, `std_waiting_time`, `mean_queue_length`, `std_queue_length`, `loss`, `actor_loss`, `critic_loss`, `entropy`, `clip_frac`.
+
+### Typical training time
+
+| Config | Approximate time |
+|--------|-----------------|
+| `--debug` (5 epochs) | ~5–10 minutes |
+| `--fast-test` | ~30 minutes |
+| Full run (100 epochs) | ~2–4 hours (GPU) / ~6–12 hours (CPU) |
+
+---
+
+## Evaluation
+
+Evaluate a saved checkpoint with [`scripts/evaluate.py`](scripts/evaluate.py):
 
 ```bash
-python scripts/train_mappo.py --help
+# Basic evaluation (10 episodes)
+python scripts/evaluate.py \
+    --checkpoint logs/mappo_seed42_YYYYMMDD_HHMMSS/checkpoints/best_checkpoint.pt
 
-Arguments:
-  --config CONFIG           Path to YAML config file
-  --debug                   Use debug config (GUI, short training)
-  --fast-test               Fast test config (no GUI, short episodes)
-  --use-gui                 Enable SUMO GUI
-  --num-seconds SECONDS     Simulation duration
-  --net-file FILE           SUMO network file
-  --route-file FILE         SUMO route file
-  --max-epoch EPOCHS        Maximum training epochs
-  --seed SEED               Random seed
-  --device {cpu,cuda}       Device to use
-  --no-wandb                Disable W&B logging
-  --experiment-name NAME    Experiment name
-  --log-dir DIR             Logging directory
+# With SUMO GUI
+python scripts/evaluate.py \
+    --checkpoint logs/.../best_checkpoint.pt \
+    --use-gui
+
+# More episodes
+python scripts/evaluate.py \
+    --checkpoint logs/.../best_checkpoint.pt \
+    --n-episode 20
+
+# Also run a random-action baseline for comparison
+python scripts/evaluate.py \
+    --checkpoint logs/.../best_checkpoint.pt \
+    --compare-baseline
 ```
 
-### Evaluation Options
+### Evaluation arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--checkpoint FILE` | required | Path to `.pt` checkpoint file |
+| `--n-episode N` | `10` | Number of evaluation episodes |
+| `--use-gui` | off | Enable SUMO GUI |
+| `--device {cpu,cuda,mps}` | `cpu` | Compute device |
+| `--compare-baseline` | off | Also evaluate a random-action baseline |
+
+---
+
+## Plotting Metrics
+
+[`scripts/plot_metrics.py`](scripts/plot_metrics.py) reads the `metrics.csv` files produced during training and generates a `metrics_overview.png` figure with four panels:
+
+- Mean waiting time vs epoch
+- Mean waiting time vs wall-clock time
+- Mean queue length vs epoch
+- Episode reward vs epoch (smoothed)
 
 ```bash
-# Evaluate trained model
-python scripts/evaluate.py --checkpoint path/to/checkpoint.pt
+# Single run
+python scripts/plot_metrics.py \
+    --csv logs/mappo_seed42_YYYYMMDD/metrics.csv \
+    --out-dir plots/
 
-# With GUI visualization
-python scripts/evaluate.py --checkpoint path/to/checkpoint.pt --use-gui
-
-# Multiple episodes
-python scripts/evaluate.py --checkpoint path/to/checkpoint.pt --n-episode 20
-
-# Compare with baseline
-python scripts/evaluate.py --checkpoint path/to/checkpoint.pt --compare-baseline
+# Multiple seeds — plots mean ± std across seeds
+python scripts/plot_metrics.py \
+    --csv logs/mappo_seed0_*/metrics.csv \
+         logs/mappo_seed1_*/metrics.csv \
+         logs/mappo_seed2_*/metrics.csv \
+    --labels "seed=0" "seed=1" "seed=2" \
+    --out-dir plots/multi_seed/
 ```
 
-## ⚙️ Configuration
+Add `--show` to display the figure interactively instead of saving.
 
-Configuration is managed through YAML files and dataclasses. See [`configs/base_config.yaml`](configs/base_config.yaml) for the complete configuration template.
+---
 
-### Key Configuration Sections
+## Experiment Sweeps
 
-#### 1. SUMO Environment
+[`scripts/run_experiment_sweep.py`](scripts/run_experiment_sweep.py) automates running multiple (variant × seed) combinations in parallel. Each subprocess writes its stdout/stderr to `logs/<variant>_seed<N>/run.log`. A summary table is printed when all runs complete.
+
+```bash
+# Default: both variants × seeds {0, 1, 2}, up to 4 parallel processes
+python scripts/run_experiment_sweep.py
+
+# Custom seeds and parallelism
+python scripts/run_experiment_sweep.py --seeds 0 1 2 3 4 --max-parallel 3
+
+# Only the critic-BN variant
+python scripts/run_experiment_sweep.py --variants critic-bn --seeds 0 1 2
+
+# Quick smoke-test (1 epoch per run)
+python scripts/run_experiment_sweep.py --max-epoch 1 --seeds 0
+```
+
+### Sweep arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--variants {baseline,critic-bn}` | both | Which variants to run |
+| `--seeds N [N ...]` | `0 1 2` | Random seeds |
+| `--max-parallel N` | `4` | Maximum concurrent subprocesses |
+| `--max-epoch N` | from config | Override epochs for every run |
+
+---
+
+## Configuration Reference
+
+YAML config files live in [`configs/`](configs/). Pass one with `--config`. Any field can be overridden by a CLI argument.
+
+### `configs/base_config.yaml` — default full run
+
 ```yaml
 sumo:
   net_file: "RESCO/cologne3/cologne3.net.xml"
   route_file: "RESCO/cologne3/cologne3.rou.xml"
-  num_seconds: 3600
+  num_seconds: 26000
   use_gui: false
   delta_time: 5
-```
+  yellow_time: 2
+  min_green: 5
+  max_green: 50
 
-#### 2. Neural Network Architecture
-```yaml
 network:
   actor_hidden: [128, 128]
   critic_hidden: [256, 256]
   activation: "relu"
   use_orthogonal_init: true
-```
 
-#### 3. MAPPO Hyperparameters
-```yaml
 mappo:
   lr_actor: 0.0003
   lr_critic: 0.001
@@ -250,10 +340,8 @@ mappo:
   vf_coef: 0.5
   ent_coef: 0.01
   max_grad_norm: 0.5
-```
+  reward_normalization: false
 
-#### 4. Training Settings
-```yaml
 training:
   max_epoch: 100
   step_per_epoch: 10000
@@ -262,257 +350,52 @@ training:
   repeat_per_collect: 4
   n_train_envs: 4
   n_test_envs: 2
+  test_interval: 5
+  save_interval: 10
+
+seed: 42
+device: "cuda"   # or "cpu" / "mps"
 ```
 
-## 🎯 Training
+### `configs/critic_bn_config.yaml` — Critic-BN variant
 
-### Training Process
+Identical to the baseline except:
 
-1. **Initialization**: 
-   - Creates SUMO environments
-   - Initializes actor and centralized critic networks
-   - Sets up optimizers and replay buffers
+```yaml
+network:
+  use_critic_bn: true   # inserts BatchNorm1d before each hidden activation
 
-2. **Data Collection**:
-   - Agents interact with environment using current policy
-   - Experiences stored in replay buffer
-
-3. **Policy Update**:
-   - Sample mini-batches from buffer
-   - Compute advantages using GAE
-   - Update actors with PPO objective
-   - Update centralized critic
-
-4. **Evaluation**:
-   - Periodically evaluate on test environment
-   - Log metrics to WandB
-   - Save checkpoints
-
-### Monitoring Training
-
-Training metrics are logged to:
-- **Console**: Real-time progress
-- **WandB Dashboard**: Comprehensive visualization (if enabled)
-- **TensorBoard**: Local logging (in log directory)
-
-Key metrics to monitor:
-- `train/episode_reward`: Episode return
-- `train/loss/actor`: Policy loss
-- `train/loss/critic`: Value function loss
-- `eval/mean_waiting_time`: Average vehicle waiting time (lower is better)
-- `eval/mean_queue_length`: Average queue length
-
-### Typical Training Time
-
-- **Debug config**: ~5-10 minutes
-- **Fast test**: ~30 minutes
-- **Full training (100 epochs)**: ~2-4 hours (GPU) / ~6-12 hours (CPU)
-
-## 📊 Evaluation
-
-### Evaluate Trained Policy
-
-```bash
-python scripts/evaluate.py \
-    --checkpoint logs/experiment/checkpoints/checkpoint_epoch_100.pt \
-    --n-episode 10 \
-    --use-gui
+mappo:
+  lr_actor: 1.0e-4
+  max_grad_norm: 0.3
+  reward_normalization: true
 ```
 
-### Evaluation Metrics
+### `configs/debug_config.yaml` — rapid debugging
 
-- **Mean Reward**: Episode return
-- **Mean Waiting Time**: Average vehicle waiting time (seconds)
-- **Mean Queue Length**: Average number of stopped vehicles
-- **Episode Length**: Number of simulation steps
+```yaml
+network:
+  actor_hidden: [64, 64]
+  critic_hidden: [128, 128]
 
-### Baseline Comparison
+training:
+  max_epoch: 5
+  step_per_epoch: 1000
+  n_train_envs: 1
+  n_test_envs: 1
 
-Compare your trained policy against random baseline:
-
-```bash
-python scripts/evaluate.py \
-    --checkpoint path/to/checkpoint.pt \
-    --compare-baseline
+device: "cpu"
 ```
-
-## 📈 Results
-
-### Expected Performance
-
-After 100 epochs of training on cologne3:
-
-| Metric | Random Policy | MAPPO (Expected) |
-|--------|--------------|------------------|
-| Avg Waiting Time | ~200-300s | ~100-150s |
-| Avg Queue Length | ~15-20 vehicles | ~8-12 vehicles |
-| Episode Reward | Variable | Improving |
-
-### Visualizing Results
-
-1. **WandB Dashboard**: View real-time training curves
-2. **SUMO GUI**: Watch learned traffic signal behavior
-3. **TensorBoard**: Local metric visualization
-
-```bash
-tensorboard --logdir logs/
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### 1. SUMO Not Found
-```
-Error: SUMO_HOME environment variable not set
-```
-**Solution**: Set SUMO_HOME in your shell configuration
-```bash
-export SUMO_HOME="/usr/share/sumo"  # Adjust path
-```
-
-#### 2. CUDA Out of Memory
-```
-RuntimeError: CUDA out of memory
-```
-**Solution**: Reduce batch size or use CPU
-```bash
-python scripts/train_mappo.py --device cpu
-# or
-python scripts/train_mappo.py --config configs/base_config.yaml  # Edit batch_size
-```
-
-#### 3. Import Errors
-```
-ModuleNotFoundError: No module named 'MAPPO'
-```
-**Solution**: Install dependencies and add project to PYTHONPATH
-```bash
-pip install -r requirements.txt
-export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-```
-
-#### 4. Training Too Slow
-**Solutions**:
-- Use `--fast-test` for quicker validation
-- Reduce `num_seconds` in config
-- Use GPU if available
-- Reduce `n_train_envs`
-
-### Debug Mode
-
-For troubleshooting, use debug mode:
-```bash
-python scripts/train_mappo.py --debug
-```
-
-This enables:
-- GUI visualization
-- Shorter episodes
-- Smaller networks
-- More frequent logging
-- No WandB (less overhead)
-
-## 📚 Architecture Details
-
-### MAPPO Overview
-
-**Centralized Training, Decentralized Execution (CTDE)**:
-- **Training**: Centralized critic sees all agent observations
-- **Execution**: Each agent acts based on local observations only
-
-### Key Components
-
-1. **Actor Network** ([`actor.py`](MAPPO/networks/actor.py))
-   - Input: Local traffic state (queue, speed, etc.)
-   - Output: Categorical distribution over traffic phases
-   - One per agent (decentralized)
-
-2. **Centralized Critic** ([`critic.py`](MAPPO/networks/critic.py))
-   - Input: Concatenated observations from all agents
-   - Output: Value estimate for global state
-   - Shared across all agents
-
-3. **MAPPO Policy** ([`mappo_policy.py`](MAPPO/agents/mappo_policy.py))
-   - PPO update with clipped objective
-   - GAE for advantage estimation
-   - Entropy bonus for exploration
-
-4. **Multi-Agent Manager** ([`multi_agent_manager.py`](MAPPO/agents/multi_agent_manager.py))
-   - Coordinates multiple agents
-   - Manages state aggregation for critic
-   - Dispatches observations to policies
-
-### Reward Structure
-
-Default reward from SUMO-RL:
-```python
-reward = previous_delay - current_delay
-```
-
-This encourages reducing cumulative vehicle delay at intersections.
-
-## 🔬 Extending the Implementation
-
-### Adding New Scenarios
-
-1. Add SUMO network and route files to `RESCO/`
-2. Create new config file in `configs/`
-3. Train:
-```bash
-python scripts/train_mappo.py --net-file RESCO/new_scenario/network.net.xml --route-file RESCO/new_scenario/routes.rou.xml
-```
-
-### Modifying Reward Function
-
-Edit [`MAPPO/envs/sumo_env_wrapper.py`](MAPPO/envs/sumo_env_wrapper.py) to implement custom rewards.
-
-### Hyperparameter Tuning
-
-Create WandB sweep configuration and run:
-```bash
-wandb sweep sweep_config.yaml
-wandb agent <sweep_id>
-```
-
-## 📖 Citation
-
-If you use this implementation in your research, please cite:
-
-```bibtex
-@software{mappo_sumo_traffic,
-  title = {MAPPO for SUMO Traffic Signal Control},
-  year = {2026},
-  note = {Implementation of Multi-Agent PPO for traffic management}
-}
-```
-
-### References
-
-1. **MAPPO**: Yu et al. (2021) - "The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games"
-2. **PPO**: Schulman et al. (2017) - "Proximal Policy Optimization Algorithms"
-3. **SUMO-RL**: Alegre (2019) - "SUMO-RL"
-4. **Traffic Control**: Ault & Sharon (2021) - "Reinforcement Learning Benchmarks for Traffic Signal Control"
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## 📝 License
-
-This project is provided for educational and research purposes.
-
-## 🙏 Acknowledgments
-
-- **Tianshou**: High-quality RL library
-- **SUMO**: Open-source traffic simulation
-- **SUMO-RL**: SUMO-Python integration
-- **RESCO**: Traffic control benchmarks
 
 ---
 
-**Questions or issues?** Please open an issue on GitHub or refer to the [implementation plan](IMPLEMENTATION_PLAN.md) for technical details.
+## SUMO Scenario
+
+The bundled scenario is **Cologne 3** from the [RESCO benchmark](https://github.com/Pi-Star-Lab/RESCO), a real-world sub-network of Cologne, Germany with 3 signalized intersections.
+
+| File | Description |
+|------|-------------|
+| [`RESCO/cologne3/cologne3.net.xml`](RESCO/cologne3/cologne3.net.xml) | Road network definition |
+| [`RESCO/cologne3/cologne3.rou.xml`](RESCO/cologne3/cologne3.rou.xml) | Vehicle demand / routes |
+
+Vehicle departures are concentrated around simulation second ~23 500, so `num_seconds` should be set to at least `26 000` for a full traffic scenario (the default).
