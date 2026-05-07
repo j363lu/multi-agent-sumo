@@ -85,6 +85,11 @@ def main():
     
     # Load checkpoint
     print(f"Loading checkpoint: {args.checkpoint}")
+    checkpoint_data = torch.load(
+        args.checkpoint,
+        map_location="cpu",
+        weights_only=False
+    )
     
     # Load config from checkpoint directory
     checkpoint_dir = os.path.dirname(os.path.dirname(args.checkpoint))
@@ -92,9 +97,12 @@ def main():
     
     if os.path.exists(config_path):
         import json
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config_dict = json.load(f)
         config = ExperimentConfig.from_dict(config_dict)
+    elif "config" in checkpoint_data:
+        print("Config file not found; using config stored inside checkpoint")
+        config = ExperimentConfig.from_dict(checkpoint_data["config"])
     else:
         print("Warning: Config not found, using default")
         from MAPPO.config.default_configs import get_default_config
@@ -111,7 +119,11 @@ def main():
         route_file=config.sumo.route_file,
         use_gui=config.sumo.use_gui,
         num_seconds=config.sumo.num_seconds,
-        delta_time=config.sumo.delta_time
+        begin_time=config.sumo.begin_time,
+        delta_time=config.sumo.delta_time,
+        yellow_time=config.sumo.yellow_time,
+        min_green=config.sumo.min_green,
+        max_green=config.sumo.max_green,
     )
     
     # Get environment info
@@ -126,17 +138,39 @@ def main():
     # Create networks
     device = torch.device(args.device)
     
-    global_obs_dim = obs_dim * len(agent_ids)
+    # global_obs_dim = obs_dim * len(agent_ids)
+    # critic = CentralizedCritic(
+    #     global_obs_dim=global_obs_dim,
+    #     hidden_dims=config.network.critic_hidden
+    # ).to(device)
+    
+    global_obs_dim = checkpoint_data["critic_state_dict"]["feature_extractor.0.weight"].shape[1]
+    print(f"Global observation dim from checkpoint: {global_obs_dim}")
+
     critic = CentralizedCritic(
         global_obs_dim=global_obs_dim,
         hidden_dims=config.network.critic_hidden
     ).to(device)
     
     policies = {}
+
+    print("Env agent IDs:", agent_ids)
+    print("Checkpoint policy IDs:", list(checkpoint_data["policies"].keys()))
+
     for agent_id in agent_ids:
+        actor_state_dict = checkpoint_data["policies"][agent_id]["actor_state_dict"]
+
+        actor_obs_dim = actor_state_dict["feature_extractor.0.weight"].shape[1]
+        actor_action_dim = action_dim
+
+        print(
+            f"Creating actor for {agent_id}: "
+            f"obs_dim={actor_obs_dim}, action_dim={actor_action_dim}"
+        )
+
         actor = ActorNetwork(
-            obs_dim=obs_dim,
-            action_dim=action_dim,
+            obs_dim=actor_obs_dim,
+            action_dim=actor_action_dim,
             hidden_dims=config.network.actor_hidden
         ).to(device)
         

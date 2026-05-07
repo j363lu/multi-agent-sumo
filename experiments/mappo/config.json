@@ -1,0 +1,65 @@
+{
+  "sumo": {
+    "net_file": "RESCO/cologne3/cologne3.net.xml",
+    "route_file": "RESCO/cologne3/cologne3.rou.xml",
+    "num_seconds": 5600,
+    "begin_time": 23400,
+    "use_gui": false,
+    "delta_time": 5,
+    "yellow_time": 2,
+    "min_green": 5,
+    "max_green": 50
+  },
+  "network": {
+    "actor_hidden": [
+      128,
+      128
+    ],
+    "critic_hidden": [
+      256,
+      256
+    ],
+    "activation": "relu",
+    "use_orthogonal_init": true
+  },
+  "mappo": {
+    "lr_actor": 0.0001,
+    "lr_critic": 0.001,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "eps_clip": 0.2,
+    "dual_clip": null,
+    "value_clip": true,
+    "advantage_normalization": true,
+    "vf_coef": 0.5,
+    "ent_coef": 0.01,
+    "max_grad_norm": 0.3,
+    "reward_normalization": true
+  },
+  "training": {
+    "max_epoch": 20,
+    "step_per_epoch": 2000,
+    "episode_per_collect": 30,
+    "batch_size": 256,
+    "repeat_per_collect": 2,
+    "n_train_envs": 4,
+    "n_test_envs": 5,
+    "test_interval": 1,
+    "save_interval": 1,
+    "log_interval": 1,
+    "use_fixed_episode_seeds": true
+  },
+  "logging": {
+    "project": "sumo-mappo-traffic",
+    "group": "cologne3",
+    "tags": [
+      "mappo",
+      "traffic-control"
+    ],
+    "use_wandb": false,
+    "log_dir": "/content/gdrive/MyDrive/multi-agent-sumo/logs",
+    "experiment_name": "mappo_1777942245"
+  },
+  "seed": 42,
+  "device": "cuda"
+}
