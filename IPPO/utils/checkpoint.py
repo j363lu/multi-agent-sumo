@@ -14,7 +14,8 @@ def save_checkpoint(
     metrics: Dict[str, float],
     save_dir: str,
     config: Optional[Dict[str, Any]] = None,
-    filename: Optional[str] = None
+    filename: Optional[str] = None,
+    extra_state: Optional[Dict[str, Any]] = None
 ) -> str:
     """
     Save training checkpoint.
@@ -27,6 +28,7 @@ def save_checkpoint(
         save_dir: Directory to save checkpoint
         config: Configuration dictionary (optional)
         filename: Custom filename (optional)
+        extra_state: Additional trainer state needed for exact resume
         
     Returns:
         Path to saved checkpoint
@@ -61,6 +63,9 @@ def save_checkpoint(
     # Add config if provided
     if config is not None:
         checkpoint['config'] = config
+
+    if extra_state is not None:
+        checkpoint['extra_state'] = extra_state
     
     # Save checkpoint
     torch.save(checkpoint, checkpoint_path)
@@ -96,7 +101,9 @@ def load_checkpoint(
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # Checkpoints are produced by this project and intentionally include
+    # non-tensor trainer state for exact resume (RNG, reward normalizer, etc.).
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # Load policies
     for agent_id, policy in policies.items():
@@ -120,7 +127,8 @@ def load_checkpoint(
         'epoch': checkpoint['epoch'],
         'metrics': checkpoint['metrics'],
         'config': checkpoint.get('config', None),
-        'timestamp': checkpoint.get('timestamp', None)
+        'timestamp': checkpoint.get('timestamp', None),
+        'extra_state': checkpoint.get('extra_state', {})
     }
 
 

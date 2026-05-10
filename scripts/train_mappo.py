@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -31,6 +32,8 @@ def _configure_sumo_env() -> None:
 
 _configure_sumo_env()
 
+import torch
+
 from MAPPO.config import ExperimentConfig
 from MAPPO.config.default_configs import get_default_config, get_debug_config, get_fast_test_config
 from MAPPO.training import MAPPOTrainer
@@ -46,6 +49,13 @@ def parse_args():
         type=str,
         default=None,
         help="Path to YAML config file"
+    )
+
+    parser.add_argument(
+        "--resume-from",
+        type=str,
+        default=None,
+        help="Path to a MAPPO checkpoint to continue training from"
     )
     
     # Preset configs
@@ -142,12 +152,43 @@ def parse_args():
     return parser.parse_args()
 
 
+def _load_resume_config(checkpoint_path: str) -> ExperimentConfig:
+    """Load the config saved with a checkpoint."""
+    checkpoint_file_dir = os.path.dirname(os.path.abspath(checkpoint_path))
+    run_dir = os.path.dirname(checkpoint_file_dir)
+    config_candidates = [
+        os.path.join(checkpoint_file_dir, "config.json"),
+        os.path.join(run_dir, "config.json"),
+    ]
+
+    for config_path in config_candidates:
+        if os.path.exists(config_path):
+            print(f"Loading resume config from: {config_path}")
+            with open(config_path, "r") as f:
+                return ExperimentConfig.from_dict(json.load(f))
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if checkpoint.get("config") is not None:
+        print("Loading resume config from checkpoint metadata")
+        return ExperimentConfig.from_dict(checkpoint["config"])
+
+    raise FileNotFoundError(
+        f"No config found for checkpoint {checkpoint_path}. "
+        "Expected config.json next to the checkpoint or embedded checkpoint config."
+    )
+
+
 def main():
     """Main training function."""
     args = parse_args()
     
     # Load configuration
-    if args.config is not None:
+    if args.resume_from is not None:
+        print(f"Resuming from checkpoint: {args.resume_from}")
+        if args.config is not None:
+            print("Warning: --config is ignored when --resume-from is used; using checkpoint config")
+        config = _load_resume_config(args.resume_from)
+    elif args.config is not None:
         # Load from YAML file
         print(f"Loading config from: {args.config}")
         config = ExperimentConfig.from_yaml(args.config)
@@ -206,13 +247,15 @@ def main():
     print(f"Simulation duration: {config.sumo.num_seconds}s")
     print(f"GUI: {config.sumo.use_gui}")
     print(f"Training epochs: {config.training.max_epoch}")
+    if args.resume_from is not None:
+        print(f"Resume checkpoint: {args.resume_from}")
     print(f"Device: {config.device}")
     print(f"Random seed: {config.seed}")
     print(f"W&B logging: {config.logging.use_wandb}")
     print("=" * 70 + "\n")
     
     # Create trainer
-    trainer = MAPPOTrainer(config)
+    trainer = MAPPOTrainer(config, resume_from=args.resume_from)
     
     # Start training
     try:

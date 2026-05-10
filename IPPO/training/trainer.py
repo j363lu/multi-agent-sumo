@@ -6,7 +6,9 @@ Main training loop implementation.
 
 import csv
 import os
+import random
 import time
+from collections import deque
 from typing import Dict, Any, List, Optional
 import numpy as np
 import torch
@@ -18,7 +20,7 @@ from IPPO.config import ExperimentConfig
 from IPPO.envs import SumoTianshouEnv
 from IPPO.networks import ActorNetwork, LocalCritic
 from IPPO.agents import IPPOPolicy, MultiAgentPolicyManager
-from IPPO.utils import WandBLogger, save_checkpoint, MetricsTracker, RewardNormalizer
+from IPPO.utils import WandBLogger, save_checkpoint, load_checkpoint, MetricsTracker, RewardNormalizer
 from IPPO.training.evaluator import evaluate_policy
 
 
@@ -30,8 +32,9 @@ class IPPOTrainer:
         config: Experiment configuration
     """
     
-    def __init__(self, config: ExperimentConfig):
+    def __init__(self, config: ExperimentConfig, resume_from: Optional[str] = None):
         self.config = config
+        self.resume_from = resume_from
         
         # Set device — priority: cuda > mps > cpu
         if config.device == "cuda" and torch.cuda.is_available():
@@ -74,9 +77,16 @@ class IPPOTrainer:
         print("Creating networks and policies...")
         self.policy_manager = self._create_policy_manager()
         
-        # Setup logging
-        exp_name = config.logging.experiment_name or f"ippo_{int(time.time())}"
-        self.log_dir = os.path.join(config.logging.log_dir, exp_name)
+        # Setup logging. Resumed runs keep writing into the checkpoint's run dir.
+        if self.resume_from is not None:
+            checkpoint_dir = os.path.dirname(os.path.abspath(self.resume_from))
+            self.log_dir = os.path.dirname(checkpoint_dir)
+            exp_name = os.path.basename(self.log_dir)
+            config.logging.log_dir = os.path.dirname(self.log_dir)
+            config.logging.experiment_name = exp_name
+        else:
+            exp_name = config.logging.experiment_name or f"ippo_{int(time.time())}"
+            self.log_dir = os.path.join(config.logging.log_dir, exp_name)
         os.makedirs(self.log_dir, exist_ok=True)
         
         self.logger = WandBLogger(
@@ -93,7 +103,9 @@ class IPPOTrainer:
         
         # Training state
         self.current_epoch = 0
+        self.start_epoch = 0
         self.total_steps = 0
+        self._wallclock_offset = 0.0
         self.training_start_time: Optional[float] = None
         # Monotonically increasing episode counter used to derive per-episode
         # SUMO seeds: seed = config.seed * 10_000 + _global_episode_count.
@@ -104,7 +116,10 @@ class IPPOTrainer:
 
         # CSV metrics file for offline plotting
         csv_path = os.path.join(self.log_dir, "metrics.csv")
-        self._csv_file = open(csv_path, "w", newline="")
+        append_metrics = self.resume_from is not None and os.path.exists(csv_path) and os.path.getsize(csv_path) > 0
+        if append_metrics:
+            self._wallclock_offset = self._read_last_wallclock(csv_path)
+        self._csv_file = open(csv_path, "a" if append_metrics else "w", newline="")
         self._csv_fields = [
             "epoch", "split", "wallclock_time_s",
             "episode_reward", "episode_length",
@@ -115,9 +130,26 @@ class IPPOTrainer:
         self._csv_writer = csv.DictWriter(
             self._csv_file, fieldnames=self._csv_fields, restval=""
         )
-        self._csv_writer.writeheader()
+        if not append_metrics:
+            self._csv_writer.writeheader()
+
+        if self.resume_from is not None:
+            self._load_training_checkpoint(self.resume_from)
         
         print("Trainer initialized successfully!")
+
+    def _read_last_wallclock(self, csv_path: str) -> float:
+        """Return the last recorded wallclock time from an existing metrics CSV."""
+        try:
+            with open(csv_path, "r", newline="") as f:
+                rows = list(csv.DictReader(f))
+            for row in reversed(rows):
+                value = row.get("wallclock_time_s", "")
+                if value != "":
+                    return float(value)
+        except (OSError, ValueError):
+            pass
+        return 0.0
     
     def _set_seeds(self, seed: int):
         """Set random seeds for reproducibility.
@@ -214,6 +246,105 @@ class IPPOTrainer:
         )
         
         return policy_manager
+
+    def _get_optimizers(self) -> Dict[str, torch.optim.Optimizer]:
+        """Return optimizer dict using the same keys as checkpoint files."""
+        optimizers = {}
+        for agent_id, policy in self.policy_manager.policies.items():
+            optimizers[f'actor_{agent_id}'] = policy.optim_actor
+            optimizers[f'critic_{agent_id}'] = policy.optim_critic
+        return optimizers
+
+    def _load_training_checkpoint(self, checkpoint_path: str):
+        """Restore model/optimizer state and set the next epoch to train."""
+        metadata = load_checkpoint(
+            checkpoint_path=checkpoint_path,
+            policies=self.policy_manager.policies,
+            optimizers=self._get_optimizers(),
+            device=str(self.device)
+        )
+        self.start_epoch = int(metadata.get('epoch', 0))
+        self.current_epoch = self.start_epoch
+        self._restore_extra_state(metadata.get('extra_state', {}))
+        if self.config.training.use_fixed_episode_seeds and self._global_episode_count == 0:
+            self._global_episode_count = self.start_epoch * self.config.training.episode_per_collect
+        print(f"Resuming IPPO training from epoch {self.start_epoch + 1}")
+
+    def _checkpoint_extra_state(self) -> Dict[str, Any]:
+        """Collect non-module training state needed for faithful resume."""
+        extra_state: Dict[str, Any] = {
+            "global_episode_count": self._global_episode_count,
+            "total_steps": self.total_steps,
+            "metrics_tracker": self._metrics_tracker_state_dict(),
+            "rng_state": {
+                "python": random.getstate(),
+                "numpy": self._pack_numpy_rng_state(np.random.get_state()),
+                "torch": torch.get_rng_state(),
+            },
+        }
+        if torch.cuda.is_available():
+            extra_state["rng_state"]["cuda"] = torch.cuda.get_rng_state_all()
+        if self._reward_normalizer is not None:
+            extra_state["reward_normalizer"] = self._reward_normalizer.state_dict()
+        return extra_state
+
+    def _pack_numpy_rng_state(self, state: tuple) -> tuple:
+        """Convert NumPy RNG state to a checkpoint-friendly tuple."""
+        name, keys, pos, has_gauss, cached_gaussian = state
+        return (name, keys.tolist(), pos, has_gauss, cached_gaussian)
+
+    def _unpack_numpy_rng_state(self, state: tuple) -> tuple:
+        """Convert serialized NumPy RNG state back to NumPy's expected format."""
+        name, keys, pos, has_gauss, cached_gaussian = state
+        return (name, np.array(keys, dtype=np.uint32), pos, has_gauss, cached_gaussian)
+
+    def _metrics_tracker_state_dict(self) -> Dict[str, Any]:
+        return {
+            "window_size": self.metrics_tracker.window_size,
+            "metrics": {k: list(v) for k, v in self.metrics_tracker.metrics.items()},
+            "episode_metrics": {
+                k: list(v) for k, v in self.metrics_tracker.episode_metrics.items()
+            },
+        }
+
+    def _load_metrics_tracker_state_dict(self, state: Dict[str, Any]):
+        if not state:
+            return
+        window_size = int(state.get("window_size", self.metrics_tracker.window_size))
+        self.metrics_tracker.window_size = window_size
+        self.metrics_tracker.metrics = {
+            k: deque(v, maxlen=window_size)
+            for k, v in state.get("metrics", {}).items()
+        }
+        self.metrics_tracker.episode_metrics = {
+            k: list(v) for k, v in state.get("episode_metrics", {}).items()
+        }
+
+    def _restore_extra_state(self, extra_state: Dict[str, Any]):
+        """Restore optional trainer state from new-format checkpoints."""
+        if not extra_state:
+            print("Warning: checkpoint has no extra trainer state; resume may not be exact")
+            return
+
+        self._global_episode_count = int(extra_state.get("global_episode_count", self._global_episode_count))
+        self.total_steps = int(extra_state.get("total_steps", self.total_steps))
+        self._load_metrics_tracker_state_dict(extra_state.get("metrics_tracker", {}))
+
+        normalizer_state = extra_state.get("reward_normalizer")
+        if normalizer_state is not None and self._reward_normalizer is not None:
+            self._reward_normalizer.load_state_dict(normalizer_state)
+
+        rng_state = extra_state.get("rng_state", {})
+        if "python" in rng_state:
+            random.setstate(rng_state["python"])
+        if "numpy" in rng_state:
+            np.random.set_state(self._unpack_numpy_rng_state(rng_state["numpy"]))
+        if "torch" in rng_state:
+            torch.set_rng_state(rng_state["torch"].detach().cpu())
+        if "cuda" in rng_state and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all([
+                state.detach().cpu() for state in rng_state["cuda"]
+            ])
     
     def train(self):
         """Main training loop."""
@@ -225,7 +356,13 @@ class IPPOTrainer:
         
         config = self.config.training
         
-        epoch_pbar = tqdm(range(config.max_epoch), desc="Training", unit="epoch")
+        if self.start_epoch >= config.max_epoch:
+            print(
+                f"Checkpoint is already at epoch {self.start_epoch}; "
+                f"max_epoch is {config.max_epoch}, so there is nothing to train."
+            )
+
+        epoch_pbar = tqdm(range(self.start_epoch, config.max_epoch), desc="Training", unit="epoch")
         for epoch in epoch_pbar:
             self.current_epoch = epoch
             epoch_start_time = time.time()
@@ -426,7 +563,7 @@ class IPPOTrainer:
     
     def _log_epoch(self, epoch: int, collect_result: Dict, train_result: Dict, epoch_time: float):
         """Log epoch metrics."""
-        wallclock_time = time.time() - self.training_start_time
+        wallclock_time = self._wallclock_offset + time.time() - self.training_start_time
 
         metrics = {
             'epoch': epoch,
@@ -468,7 +605,7 @@ class IPPOTrainer:
     
     def _log_evaluation(self, epoch: int, eval_result: Dict):
         """Log evaluation metrics."""
-        wallclock_time = time.time() - self.training_start_time
+        wallclock_time = self._wallclock_offset + time.time() - self.training_start_time
 
         metrics = {f'eval/{k}': v for k, v in eval_result.items()}
         metrics['eval/wallclock_time'] = wallclock_time
@@ -495,16 +632,12 @@ class IPPOTrainer:
         """Save training checkpoint."""
         checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
         
-        optimizers = {}
-        for agent_id, policy in self.policy_manager.policies.items():
-            optimizers[f'actor_{agent_id}'] = policy.optim_actor
-            optimizers[f'critic_{agent_id}'] = policy.optim_critic
-        
         save_checkpoint(
             policies=self.policy_manager.policies,
-            optimizers=optimizers,
+            optimizers=self._get_optimizers(),
             epoch=epoch + 1,
             metrics=self.metrics_tracker.get_all_stats(),
             save_dir=checkpoint_dir,
-            config=self.config.to_dict()
+            config=self.config.to_dict(),
+            extra_state=self._checkpoint_extra_state()
         )

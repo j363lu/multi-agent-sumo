@@ -8,6 +8,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -79,6 +80,29 @@ def parse_args():
     return parser.parse_args()
 
 
+def _load_config(checkpoint_path: str) -> ExperimentConfig:
+    """Load the training config saved with a checkpoint."""
+    checkpoint_file_dir = os.path.dirname(checkpoint_path)
+    run_dir = os.path.dirname(checkpoint_file_dir)
+    config_candidates = [
+        os.path.join(checkpoint_file_dir, "config.json"),
+        os.path.join(run_dir, "config.json"),
+    ]
+
+    for config_path in config_candidates:
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                return ExperimentConfig.from_dict(json.load(f))
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if checkpoint.get("config") is not None:
+        return ExperimentConfig.from_dict(checkpoint["config"])
+
+    print("Warning: Config not found, using default")
+    from MAPPO.config.default_configs import get_default_config
+    return get_default_config()
+
+
 def main():
     """Main evaluation function."""
     args = parse_args()
@@ -86,19 +110,7 @@ def main():
     # Load checkpoint
     print(f"Loading checkpoint: {args.checkpoint}")
     
-    # Load config from checkpoint directory
-    checkpoint_dir = os.path.dirname(os.path.dirname(args.checkpoint))
-    config_path = os.path.join(checkpoint_dir, "config.json")
-    
-    if os.path.exists(config_path):
-        import json
-        with open(config_path, 'r') as f:
-            config_dict = json.load(f)
-        config = ExperimentConfig.from_dict(config_dict)
-    else:
-        print("Warning: Config not found, using default")
-        from MAPPO.config.default_configs import get_default_config
-        config = get_default_config()
+    config = _load_config(args.checkpoint)
     
     # Override GUI setting
     if args.use_gui:
@@ -111,31 +123,39 @@ def main():
         route_file=config.sumo.route_file,
         use_gui=config.sumo.use_gui,
         num_seconds=config.sumo.num_seconds,
-        delta_time=config.sumo.delta_time
+        begin_time=config.sumo.begin_time,
+        delta_time=config.sumo.delta_time,
+        yellow_time=config.sumo.yellow_time,
+        min_green=config.sumo.min_green,
+        max_green=config.sumo.max_green
     )
     
     # Get environment info
     agent_ids = env.agents
-    obs_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
+    agent_obs_dims = {}
+    total_obs_dim = 0
+    for agent_id in agent_ids:
+        obs_dim = env.sumo_env.observation_space(agent_id).shape[0]
+        agent_obs_dims[agent_id] = obs_dim
+        total_obs_dim += obs_dim
     
     print(f"Agents: {len(agent_ids)}")
-    print(f"Observation dim: {obs_dim}")
+    print(f"Agent observation dimensions: {agent_obs_dims}")
     print(f"Action dim: {action_dim}")
     
     # Create networks
     device = torch.device(args.device)
     
-    global_obs_dim = obs_dim * len(agent_ids)
     critic = CentralizedCritic(
-        global_obs_dim=global_obs_dim,
+        global_obs_dim=total_obs_dim,
         hidden_dims=config.network.critic_hidden
     ).to(device)
     
     policies = {}
     for agent_id in agent_ids:
         actor = ActorNetwork(
-            obs_dim=obs_dim,
+            obs_dim=agent_obs_dims[agent_id],
             action_dim=action_dim,
             hidden_dims=config.network.actor_hidden
         ).to(device)

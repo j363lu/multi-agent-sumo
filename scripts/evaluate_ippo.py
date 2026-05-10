@@ -8,6 +8,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -79,6 +80,29 @@ def parse_args():
     return parser.parse_args()
 
 
+def _load_config(checkpoint_path: str) -> ExperimentConfig:
+    """Load the training config saved with a checkpoint."""
+    checkpoint_file_dir = os.path.dirname(checkpoint_path)
+    run_dir = os.path.dirname(checkpoint_file_dir)
+    config_candidates = [
+        os.path.join(checkpoint_file_dir, "config.json"),
+        os.path.join(run_dir, "config.json"),
+    ]
+
+    for config_path in config_candidates:
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                return ExperimentConfig.from_dict(json.load(f))
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if checkpoint.get("config") is not None:
+        return ExperimentConfig.from_dict(checkpoint["config"])
+
+    print("Warning: Config not found, using default")
+    from IPPO.config.default_configs import get_default_config
+    return get_default_config()
+
+
 def main():
     """Main evaluation function."""
     args = parse_args()
@@ -86,19 +110,7 @@ def main():
     # Load checkpoint
     print(f"Loading checkpoint: {args.checkpoint}")
     
-    # Load config from checkpoint directory
-    checkpoint_dir = os.path.dirname(os.path.dirname(args.checkpoint))
-    config_path = os.path.join(checkpoint_dir, "config.json")
-    
-    if os.path.exists(config_path):
-        import json
-        with open(config_path, 'r') as f:
-            config_dict = json.load(f)
-        config = ExperimentConfig.from_dict(config_dict)
-    else:
-        print("Warning: Config not found, using default")
-        from IPPO.config.default_configs import get_default_config
-        config = get_default_config()
+    config = _load_config(args.checkpoint)
     
     # Override GUI setting
     if args.use_gui:
